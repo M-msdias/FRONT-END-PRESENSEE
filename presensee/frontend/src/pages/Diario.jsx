@@ -20,8 +20,6 @@ const CATEGORIAS = ["Atendimento", "Reunião", "Contato com responsável", "Admi
 const PRIORIDADES = ["Alta", "Média", "Baixa"];
 
 function lerAvatarDiario() {
-  const direto = localStorage.getItem("avatarUsuario");
-  if (direto) return direto;
   const user = getUsuario();
   return user?.avatar || "";
 }
@@ -59,7 +57,7 @@ function formatarDataDisplay(iso) {
 
 function limparTags(texto) {
   if (!texto) return "";
-  return texto
+  const semTags = String(texto)
     .replace(/\[Prioridade:.*?\]\s*/gi, "")
     .replace(/\[Categoria:\s*.*?\]\s*/gi, "")
     .replace(/\[Atendimento\]\s*/gi, "")
@@ -67,7 +65,23 @@ function limparTags(texto) {
     .replace(/\[Contato com responsável\]\s*/gi, "")
     .replace(/\[Administrativo\]\s*/gi, "")
     .replace(/\[Observação\]\s*/gi, "")
+    .replace(/\|\s*\[Atestado:\s*https?:\/\/[^\]]+\]/gi, "")
     .trim();
+
+  if (semTags.startsWith("{") && semTags.endsWith("}")) {
+    try {
+      const obj = JSON.parse(semTags);
+      const partes = [];
+      if (obj.guardianName) partes.push(`Responsável: ${obj.guardianName}`);
+      if (obj.guardianPhone) partes.push(`Tel.: ${obj.guardianPhone}`);
+      if (obj.notes) partes.push(obj.notes);
+      if (partes.length > 0) return partes.join(" · ");
+    } catch {
+      return semTags;
+    }
+  }
+
+  return semTags;
 }
 
 function extrairPrioridade(texto) {
@@ -116,9 +130,16 @@ function Diario() {
         const resIncidentes = await api.get("/incidents");
         const dadosInc = Array.isArray(resIncidentes.data) ? resIncidentes.data : [];
 
-        // 1. Intervenções (vinculadas a estudantes)
+        // 1. Intervenções (vinculadas a estudantes, ignorando FICHA_CADASTRO e pendências)
         const intervs = dadosInc
-          .filter((i) => i.studentId || i.alunoId)
+          .filter(
+            (i) =>
+              (i.studentId || i.alunoId) &&
+              i.type !== "FICHA_CADASTRO" &&
+              !i.isPending &&
+              i.type !== "PENDENCIA" &&
+              i.type !== "RESOLVIDO"
+          )
           .map((i) => ({
             ...i,
             id: i.id || i._id,
@@ -133,6 +154,7 @@ function Diario() {
         const notas = dadosInc
           .filter(
             (i) =>
+              i.type !== "FICHA_CADASTRO" &&
               (i.type === "NOTA" || (!i.isPending && i.type !== "PENDENCIA" && i.type !== "RESOLVIDO")) &&
               !(i.studentId || i.alunoId)
           )
@@ -151,7 +173,7 @@ function Diario() {
           });
         setAnotacoesLocais(notas);
 
-        // 3. Pendências (agora preservando a Categoria!)
+        // 3. Pendências
         const pends = dadosInc
           .filter((i) => i.isPending || i.type === "PENDENCIA" || i.type === "RESOLVIDO")
           .map((p) => {

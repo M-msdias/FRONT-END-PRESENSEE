@@ -7,6 +7,12 @@ import "../styles/AlunoPerfil.css";
 
 const PRIORIDADES = ["Alta", "Média", "Baixa"];
 
+const ESTILOS_PRIORIDADE = {
+  Alta: { backgroundColor: "#fee2e2", color: "#b91c1c" },
+  Média: { backgroundColor: "#fef3c7", color: "#b45309" },
+  Baixa: { backgroundColor: "#dcfce7", color: "#15803d" },
+};
+
 function corFrequencia(valor) {
   if (valor < 75) return "#ef4444";
   if (valor < 90) return "#eab308";
@@ -39,13 +45,54 @@ function formatarDataDisplay(iso) {
 
 function limparTagsPendencia(texto) {
   if (!texto) return "";
-  return texto.replace(/\[Prioridade:\s*(Alta|Média|Baixa)\]\s*/gi, "").trim();
+  return texto
+    .replace(/\[Prioridade:\s*(Alta|Média|Baixa)\]\s*/gi, "")
+    .replace(/\[Categoria:\s*.*?\]\s*/gi, "")
+    .trim();
 }
 
 function extrairPrioridadePendencia(texto) {
   if (!texto) return "Média";
   const match = texto.match(/\[Prioridade:\s*(Alta|Média|Baixa)\]/i);
-  return match ? match[1] : "Média";
+  if (!match) return "Média";
+  const valor = match[1].toLowerCase();
+  if (valor === "alta") return "Alta";
+  if (valor === "baixa") return "Baixa";
+  return "Média";
+}
+
+function extrairDadosFichaCadastro(incidentes) {
+  const ficha = incidentes.find((i) => i.type === "FICHA_CADASTRO");
+  if (!ficha?.description) return null;
+  try {
+    return JSON.parse(ficha.description);
+  } catch {
+    return null;
+  }
+}
+
+function formatarDescricaoIntervencao(texto) {
+  if (!texto) return "";
+  const limpo = String(texto).trim();
+  if (limpo.startsWith("{") && limpo.endsWith("}")) {
+    try {
+      const obj = JSON.parse(limpo);
+      const partes = [];
+      if (obj.guardianName) {
+        partes.push(
+          `Responsável: ${obj.guardianName}${obj.guardianRelationship ? ` (${obj.guardianRelationship})` : ""}`
+        );
+      }
+      if (obj.guardianPhone) partes.push(`Tel. Resp.: ${obj.guardianPhone}`);
+      if (obj.guardianEmail) partes.push(`E-mail Resp.: ${obj.guardianEmail}`);
+      if (obj.phone) partes.push(`Tel. Aluno: ${obj.phone}`);
+      if (obj.notes) partes.push(`Obs.: ${obj.notes}`);
+      if (partes.length > 0) return partes.join(" · ");
+    } catch {
+      return limpo;
+    }
+  }
+  return limpo;
 }
 
 function AlunoPerfil() {
@@ -122,6 +169,20 @@ function AlunoPerfil() {
           dadosAluno.riskLevel ??
           (frequenciaCalculada < 75 ? 85 : frequenciaCalculada < 90 ? 50 : 10);
 
+        let todosIncidentes = [];
+        try {
+          const resIncidentes = await api.get(`/incidents?studentId=${studentRealId}`);
+          todosIncidentes = Array.isArray(resIncidentes.data) ? resIncidentes.data : [];
+        } catch (e) {
+          console.warn("Rota de incidentes pendente para o aluno:", e);
+        }
+
+        const incidentes = todosIncidentes.filter(
+          (i) => !i.studentId || String(i.studentId) === String(studentRealId)
+        );
+
+        const fichaCadastro = extrairDadosFichaCadastro(incidentes);
+
         let listaResponsaveis = [];
         if (Array.isArray(dadosAluno.guardians) && dadosAluno.guardians.length > 0) {
           listaResponsaveis = dadosAluno.guardians;
@@ -139,6 +200,13 @@ function AlunoPerfil() {
               telefone: dadosAluno.guardianPhone || dadosAluno.responsavelTelefone || "Telefone não informado",
             },
           ];
+        } else if (fichaCadastro?.guardianName || fichaCadastro?.guardianPhone) {
+          listaResponsaveis = [
+            {
+              nome: fichaCadastro.guardianName || "Não informado",
+              telefone: fichaCadastro.guardianPhone || "Telefone não informado",
+            },
+          ];
         }
 
         setAluno({
@@ -147,7 +215,12 @@ function AlunoPerfil() {
           matricula: dadosAluno.registration || dadosAluno.matricula || "N/A",
           turma: dadosAluno.class?.name || dadosAluno.turma?.name || dadosAluno.turma || "Turma não vinculada",
           email: dadosAluno.email || "Não informado",
-          foto: dadosAluno.biometryUrl || dadosAluno.photoUrl || dadosAluno.avatar || "",
+          foto:
+            dadosAluno.biometricDataUrl ||
+            dadosAluno.biometryUrl ||
+            dadosAluno.photoUrl ||
+            dadosAluno.avatar ||
+            "",
           frequencia: frequenciaCalculada,
           risco: riscoCalculado,
           status: dadosAluno.status || (frequenciaCalculada < 75 ? "Em acompanhamento" : "Regular"),
@@ -155,44 +228,39 @@ function AlunoPerfil() {
           responsaveis: listaResponsaveis,
         });
 
-        try {
-          const resIncidentes = await api.get(`/incidents?studentId=${studentRealId}`);
-          const todosIncidentes = Array.isArray(resIncidentes.data) ? resIncidentes.data : [];
-          const incidentes = todosIncidentes.filter(
-            (i) => !i.studentId || String(i.studentId) === String(studentRealId)
-          );
+        // Exclui registros internos de FICHA_CADASTRO e pendências da linha do tempo de intervenções
+        const historicoFiltrado = incidentes.filter(
+          (i) =>
+            !i.isPending &&
+            i.type !== "PENDENCIA" &&
+            i.type !== "RESOLVIDO" &&
+            i.type !== "FICHA_CADASTRO"
+        );
+        setHistorico(
+          historicoFiltrado
+            .map((e) => ({
+              id: e.id || e._id,
+              data: e.createdAt || e.date || e.data,
+              tipo: e.type || e.tipo || "Intervenção",
+              descricao: formatarDescricaoIntervencao(e.description || e.descricao),
+            }))
+            .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+        );
 
-          const historicoFiltrado = incidentes.filter(
-            (i) => !i.isPending && i.type !== "PENDENCIA" && i.type !== "RESOLVIDO"
-          );
-          setHistorico(
-            historicoFiltrado
-              .map((e) => ({
-                id: e.id || e._id,
-                data: e.createdAt || e.date || e.data,
-                tipo: e.type || e.tipo || "Intervenção",
-                descricao: e.description || e.descricao,
-              }))
-              .sort((a, b) => String(b.data).localeCompare(String(a.data)))
-          );
-
-          const pends = incidentes.filter(
-            (i) => i.isPending || i.type === "PENDENCIA" || i.type === "RESOLVIDO"
-          );
-          setPendencias(
-            pends.map((p) => {
-              const bruto = p.description || p.texto || "";
-              return {
-                id: p.id || p._id,
-                texto: limparTagsPendencia(bruto),
-                prioridade: extrairPrioridadePendencia(bruto),
-                feita: p.resolved || p.feita || p.type === "RESOLVIDO" || false,
-              };
-            })
-          );
-        } catch (e) {
-          console.warn("Rota de incidentes pendente para o aluno:", e);
-        }
+        const pends = incidentes.filter(
+          (i) => i.isPending || i.type === "PENDENCIA" || i.type === "RESOLVIDO"
+        );
+        setPendencias(
+          pends.map((p) => {
+            const bruto = p.description || p.texto || "";
+            return {
+              id: p.id || p._id,
+              texto: limparTagsPendencia(bruto),
+              prioridade: p.priority || p.prioridade || extrairPrioridadePendencia(bruto),
+              feita: p.resolved || p.feita || p.type === "RESOLVIDO" || false,
+            };
+          })
+        );
       } catch (error) {
         console.error("Erro ao buscar perfil do aluno:", error);
       } finally {
@@ -240,6 +308,11 @@ function AlunoPerfil() {
 
   const ultimasIntervencoes = historicoExpandido ? historico : historico.slice(0, 3);
   const responsavelPrincipal = aluno.responsaveis?.[0];
+
+  const pendenciasOrdenadas = [...pendencias].sort((a, b) => {
+    if (a.feita !== b.feita) return a.feita ? 1 : -1;
+    return PRIORIDADES.indexOf(a.prioridade) - PRIORIDADES.indexOf(b.prioridade);
+  });
 
   function abrirModalNovaPendencia() {
     setPendenciaEditando(null);
@@ -572,40 +645,58 @@ function AlunoPerfil() {
               </div>
             </header>
 
-            {pendencias.length > 0 ? (
+            {pendenciasOrdenadas.length > 0 ? (
               <div className="perfil-pendencias-modernas">
-                {pendencias.map((item) => (
-                  <div key={item.id} className={`perfil-pendencia-item ${item.feita ? "concluida" : ""}`}>
-                    <label className="perfil-pendencia-checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(item.feita)}
-                        onChange={() => alternarPendencia(item.id)}
-                      />
-                      <span className="perfil-pendencia-texto">{item.texto}</span>
-                    </label>
-                    <div className="perfil-pendencia-botoes">
-                      <button
-                        type="button"
-                        className="perfil-btn-editar-pendencia"
-                        onClick={() => abrirModalEditarPendencia(item)}
-                        title="Editar pendência"
-                        aria-label={`Editar pendência: ${item.texto}`}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        type="button"
-                        className="perfil-btn-excluir-pendencia"
-                        onClick={() => setPendenciaParaExcluir(item)}
-                        title="Excluir pendência"
-                        aria-label={`Excluir pendência: ${item.texto}`}
-                      >
-                        ×
-                      </button>
+                {pendenciasOrdenadas.map((item) => {
+                  const nivelPrio = ESTILOS_PRIORIDADE[item.prioridade] ? item.prioridade : "Média";
+                  const estiloPrio = ESTILOS_PRIORIDADE[nivelPrio];
+
+                  return (
+                    <div key={item.id} className={`perfil-pendencia-item ${item.feita ? "concluida" : ""}`}>
+                      <label className="perfil-pendencia-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(item.feita)}
+                          onChange={() => alternarPendencia(item.id)}
+                        />
+                        <span className="perfil-pendencia-texto">{item.texto}</span>
+                      </label>
+                      <div className="perfil-pendencia-botoes" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span
+                          style={{
+                            ...estiloPrio,
+                            fontSize: "11.5px",
+                            fontWeight: 700,
+                            padding: "3px 10px",
+                            borderRadius: "999px",
+                            lineHeight: 1.2,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {nivelPrio}
+                        </span>
+                        <button
+                          type="button"
+                          className="perfil-btn-editar-pendencia"
+                          onClick={() => abrirModalEditarPendencia(item)}
+                          title="Editar pendência"
+                          aria-label={`Editar pendência: ${item.texto}`}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className="perfil-btn-excluir-pendencia"
+                          onClick={() => setPendenciaParaExcluir(item)}
+                          title="Excluir pendência"
+                          aria-label={`Excluir pendência: ${item.texto}`}
+                        >
+                          ×
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="perfil-sem-registros">

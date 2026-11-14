@@ -22,12 +22,12 @@ function IconeSino() {
 export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
   const navigate = useNavigate();
   const areaRef = useRef(null);
-  
+
   const [alertasApi, setAlertasApi] = useState([]);
   const [comunicadosApi, setComunicadosApi] = useState([]);
   const [aberto, setAberto] = useState(false);
   const [comunicadoSelecionado, setComunicadoSelecionado] = useState(null);
-  
+
   const [lidos, setLidos] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("alertas_lidos")) || [];
@@ -63,20 +63,24 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
     buscarNotificacoes();
   }, [notificacoesProp]);
 
-  const fonteAlertas = (notificacoesProp && notificacoesProp.length > 0) ? notificacoesProp : alertasApi;
+  const fonteAlertas = notificacoesProp && notificacoesProp.length > 0 ? notificacoesProp : alertasApi;
 
-  const itensAlertas = (Array.isArray(fonteAlertas) ? fonteAlertas : []).map((alerta) => ({
-    ...alerta,
-    origem: "ALERTA",
-    id: `alerta-${alerta.id || alerta._id || Math.random().toString(36).substr(2, 9)}`,
-    alunoId: alerta.studentId || String(alerta.matricula ?? alerta.alunoId ?? "").trim() || null,
-    subtitulo: alerta.student?.name || alerta.estudante || alerta.alunoNome || alerta.aluno?.nome || "Estudante",
-    titulo: alerta.title || alerta.titulo || "Novo Alerta",
-    descricao: alerta.message || alerta.descricao || alerta.mensagem || "",
-    nivel: alerta.level || alerta.nivel || alerta.risco || "baixo",
-    dataOrdenacao: alerta.createdAt ? new Date(alerta.createdAt).getTime() : 0,
-    quando: alerta.quando || (alerta.createdAt ? new Date(alerta.createdAt).toLocaleDateString("pt-BR") : "Recente"),
-  }));
+  const itensAlertas = (Array.isArray(fonteAlertas) ? fonteAlertas : []).map((alerta) => {
+    const idBase = `alerta-${alerta.id || alerta._id || Math.random().toString(36).slice(2, 11)}`;
+    return {
+      ...alerta,
+      origem: "ALERTA",
+      id: idBase,
+      chaveLeitura: idBase,
+      alunoId: alerta.studentId || String(alerta.matricula ?? alerta.alunoId ?? "").trim() || null,
+      subtitulo: alerta.student?.name || alerta.estudante || alerta.alunoNome || alerta.aluno?.nome || "Estudante",
+      titulo: alerta.title || alerta.titulo || "Novo Alerta",
+      descricao: alerta.message || alerta.descricao || alerta.mensagem || "",
+      nivel: alerta.level || alerta.nivel || alerta.risco || "baixo",
+      dataOrdenacao: alerta.createdAt ? new Date(alerta.createdAt).getTime() : 0,
+      quando: alerta.quando || (alerta.createdAt ? new Date(alerta.createdAt).toLocaleDateString("pt-BR") : "Recente"),
+    };
+  });
 
   const itensComunicados = (Array.isArray(comunicadosApi) ? comunicadosApi : []).map((com) => {
     const tipoLower = String(com.tipo || "").toLowerCase();
@@ -85,11 +89,19 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
       nivel = "medio";
     }
 
-    const dataRef = com.publicadoEm || com.alteradoEm || com.createdAt;
+    const versao = `${com.alteradoEm || ""}_${com.titulo || ""}_${com.mensagem || ""}_${com.tipo || ""}`;
+    const dataRef = com.alteradoEm || com.publicadoEm || com.createdAt;
+    const foiEditado =
+      com.alteradoEm &&
+      com.publicadoEm &&
+      Math.abs(new Date(com.alteradoEm).getTime() - new Date(com.publicadoEm).getTime()) > 5000;
+
     return {
       ...com,
       origem: "COMUNICADO",
       id: `comunicado-${com.id}`,
+      chaveLeitura: `comunicado-${com.id}-${versao}`,
+      foiEditado: Boolean(foiEditado),
       alunoId: null,
       subtitulo: `Administração • ${com.tipo || "Informativo"}`,
       titulo: com.titulo || "Comunicado da Administração",
@@ -104,8 +116,8 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
   const alertas = [...itensComunicados, ...itensAlertas].sort(
     (a, b) => b.dataOrdenacao - a.dataOrdenacao
   );
-  
-  const naoLidos = alertas.filter((alerta) => !lidos.includes(alerta.id)).length;
+
+  const naoLidos = alertas.filter((alerta) => !lidos.includes(alerta.chaveLeitura)).length;
 
   useEffect(() => {
     if (!aberto) return undefined;
@@ -130,7 +142,7 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
   }, [aberto]);
 
   function visualizar(item) {
-    setLidos((anteriores) => [...new Set([...anteriores, item.id])]);
+    setLidos((anteriores) => [...new Set([...anteriores, item.chaveLeitura])]);
 
     if (item.origem === "COMUNICADO") {
       setComunicadoSelecionado(item);
@@ -147,21 +159,21 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
   }
 
   function marcarTodasComoLidas() {
-    const todosIds = alertas.map((a) => a.id);
-    setLidos((anteriores) => [...new Set([...anteriores, ...todosIds])]);
+    const todasChaves = alertas.map((a) => a.chaveLeitura);
+    setLidos((anteriores) => [...new Set([...anteriores, ...todasChaves])]);
   }
 
   return (
     <div className="pnot-root" ref={areaRef}>
-      <button 
-        type="button" 
-        className={`pnot-trigger ${naoLidos ? "pnot-trigger--active" : ""}`} 
+      <button
+        type="button"
+        className={`pnot-trigger ${naoLidos ? "pnot-trigger--active" : ""}`}
         onClick={(e) => {
           e.preventDefault();
           setAberto((a) => !a);
           setComunicadoSelecionado(null);
-        }} 
-        aria-label="Ver notificações" 
+        }}
+        aria-label="Ver notificações"
         aria-expanded={aberto}
       >
         <IconeSino />
@@ -226,15 +238,34 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
             <>
               <div className="pnot-list">
                 {alertas.length ? alertas.map((alerta) => {
-                  const lido = lidos.includes(alerta.id);
+                  const lido = lidos.includes(alerta.chaveLeitura);
                   return (
-                    <button type="button" key={alerta.id} className={`pnot-item ${lido ? "pnot-item--read" : ""}`} onClick={() => visualizar(alerta)}>
+                    <button type="button" key={alerta.chaveLeitura} className={`pnot-item ${lido ? "pnot-item--read" : ""}`} onClick={() => visualizar(alerta)}>
                       <span className={`pnot-level pnot-level--${alerta.nivel || "baixo"}`} aria-hidden="true" />
                       <span className="pnot-content">
-                        <span className="pnot-item-top"><strong>{alerta.titulo}</strong><small>{alerta.quando || ""}</small></span>
+                        <span className="pnot-item-top">
+                          <strong>{alerta.titulo}</strong>
+                          <small>{alerta.quando || ""}</small>
+                        </span>
                         <span className="pnot-student">{alerta.subtitulo}</span>
                         <span className="pnot-description">{alerta.descricao}</span>
-                        <span className="pnot-level-name">{ETIQUETAS[alerta.nivel] || "Informativo"}</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                          <span className="pnot-level-name">{ETIQUETAS[alerta.nivel] || "Informativo"}</span>
+                          {alerta.foiEditado && (
+                            <span
+                              style={{
+                                fontSize: "11px",
+                                fontWeight: 700,
+                                padding: "2px 8px",
+                                borderRadius: "999px",
+                                backgroundColor: "#ede9fe",
+                                color: "#5b21b6",
+                              }}
+                            >
+                              Atualizado
+                            </span>
+                          )}
+                        </span>
                       </span>
                       {!lido && <span className="pnot-unread" aria-label="Não lida" />}
                     </button>

@@ -1,5 +1,4 @@
 import { useMemo, useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import api from "../../services/api";
 import GestorDetalhesModal from "../components/GestorDetalhesModal";
 import "../../styles/Alunos.css";
@@ -7,7 +6,6 @@ import "../styles/admin.css";
 import "../styles/AdminGestores.css";
 
 export default function AdminGestores() {
-  const navigate = useNavigate();
   const [gestores, setGestores] = useState([]);
   const [escolas, setEscolas] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -151,7 +149,7 @@ export default function AdminGestores() {
 
   return (
     <div className="alunos-page admin-gestores-page">
-      <header className="alunos-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+      <header className="alunos-header">
         <div className="alunos-header-usuario">
           <div>
             <h1>Gestores escolares</h1>
@@ -160,15 +158,6 @@ export default function AdminGestores() {
             </p>
           </div>
         </div>
-
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={() => navigate("/admin/escolas")}
-          style={{ padding: "10px 16px", borderRadius: "8px", cursor: "pointer" }}
-        >
-          Gerenciar Escolas e Gestores
-        </button>
       </header>
 
       <section

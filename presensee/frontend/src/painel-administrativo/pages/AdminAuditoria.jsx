@@ -5,36 +5,64 @@ import "../styles/admin.css";
 import "../styles/AdminAuditoria.css";
 
 const TIPOS = ["Todas", "Cadastro", "Alteração", "Exclusão", "Outros"];
+const MODULOS = ["Todos", "Escola", "Chamado", "Comunicado"];
 
-function normalizarTipo(tipoBruto, acaoTexto) {
-  const combinado = `${tipoBruto || ""} ${acaoTexto || ""}`.toLocaleLowerCase("pt-BR");
+function normalizarTipo(tipoBruto, tituloTexto, descricaoTexto) {
+  const titulo = String(tituloTexto || "").toLocaleLowerCase("pt-BR");
+  const combinado = `${tipoBruto || ""} ${titulo} ${descricaoTexto || ""}`.toLocaleLowerCase("pt-BR");
+
+  // 1. Verifica primeiro a ação principal no título
   if (
-    combinado.includes("cadastr") ||
-    combinado.includes("criad") ||
-    combinado.includes("create") ||
-    combinado.includes("escola") ||
-    combinado.includes("chamado")
-  ) {
-    return "Cadastro";
-  }
-  if (
-    combinado.includes("exclu") ||
-    combinado.includes("delet") ||
-    combinado.includes("remov")
+    titulo.includes("exclu") ||
+    titulo.includes("delet") ||
+    titulo.includes("remov")
   ) {
     return "Exclusão";
   }
+
   if (
-    combinado.includes("alter") ||
-    combinado.includes("atualiz") ||
-    combinado.includes("edit") ||
-    combinado.includes("publicad") ||
-    combinado.includes("comunicado") ||
-    combinado.includes("status")
+    titulo.includes("cadastr") ||
+    titulo.includes("criad") ||
+    titulo.includes("abert") ||
+    titulo.includes("create")
+  ) {
+    return "Cadastro";
+  }
+
+  if (
+    titulo.includes("alter") ||
+    titulo.includes("atualiz") ||
+    titulo.includes("edit") ||
+    titulo.includes("publicad") ||
+    titulo.includes("status") ||
+    titulo.includes("reenvi") ||
+    titulo.includes("resolvid") ||
+    titulo.includes("andamento") ||
+    titulo.includes("fechad")
   ) {
     return "Alteração";
   }
+
+  // 2. Fallback pelo texto completo caso o título seja genérico
+  if (combinado.includes("exclu") || combinado.includes("delet") || combinado.includes("remov")) {
+    return "Exclusão";
+  }
+  if (combinado.includes("cadastr") || combinado.includes("criad") || combinado.includes("abert")) {
+    return "Cadastro";
+  }
+  if (combinado.includes("alter") || combinado.includes("atualiz") || combinado.includes("edit")) {
+    return "Alteração";
+  }
+
   return "Outros";
+}
+
+function normalizarModulo(entidadeBruta, tipoBruto, tituloTexto) {
+  const primario = `${entidadeBruta || ""} ${tipoBruto || ""} ${tituloTexto || ""}`.toLocaleLowerCase("pt-BR");
+  if (primario.includes("comunicado")) return "Comunicado";
+  if (primario.includes("chamado")) return "Chamado";
+  if (primario.includes("escola")) return "Escola";
+  return "Sistema";
 }
 
 function formatarDia(data) {
@@ -63,11 +91,13 @@ function IconeAcao({ tipo }) {
 
 function exportarCSV(registros) {
   const linhas = [
-    ["Data", "Tipo", "Ação", "Responsável"],
+    ["Data", "Módulo", "Tipo", "Ação", "Descrição", "Responsável"],
     ...registros.map((registro) => [
       registro.horario ? `${registro.dia} às ${registro.horario}` : "",
+      registro.modulo,
       registro.tipo,
       registro.titulo || registro.acao || "",
+      registro.descricao || "",
       registro.responsavel || "Sistema"
     ])
   ];
@@ -102,6 +132,7 @@ export default function AdminAuditoria() {
 
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState("Todas");
+  const [modulo, setModulo] = useState("Todos");
   const [ordenacao, setOrdenacao] = useState("recentes");
   const [pagina, setPagina] = useState(1);
   const [itensPorPagina, setItensPorPagina] = useState(10);
@@ -130,7 +161,8 @@ export default function AdminAuditoria() {
       const dataObj = log.criadoEm ? new Date(log.criadoEm) : new Date();
       const titulo = log.titulo || extrairDetalhes(log.acao).titulo;
       const descricao = log.descricao || extrairDetalhes(log.acao).descricao;
-      const tipoAcao = normalizarTipo(log.tipo, `${titulo} ${descricao} ${log.acao || ""}`);
+      const tipoAcao = normalizarTipo(log.tipo, titulo, descricao);
+      const moduloAcao = normalizarModulo(log.entidade, log.tipo, titulo);
 
       return {
         ...log,
@@ -142,6 +174,7 @@ export default function AdminAuditoria() {
           ? dataObj.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
           : "—",
         tipo: tipoAcao,
+        modulo: moduloAcao,
         titulo,
         descricao,
         responsavel: log.responsavel || "Administrador"
@@ -153,13 +186,14 @@ export default function AdminAuditoria() {
     const termo = busca.trim().toLocaleLowerCase("pt-BR");
     return registros.filter((registro) => {
       const correspondeTipo = tipo === "Todas" || registro.tipo === tipo;
-      const texto = [registro.titulo, registro.descricao, registro.responsavel, registro.tipo, registro.entidade]
+      const correspondeModulo = modulo === "Todos" || registro.modulo === modulo;
+      const texto = [registro.titulo, registro.descricao, registro.responsavel, registro.tipo, registro.modulo, registro.entidade]
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase("pt-BR");
-      return correspondeTipo && texto.includes(termo);
+      return correspondeTipo && correspondeModulo && texto.includes(termo);
     });
-  }, [registros, busca, tipo]);
+  }, [registros, busca, tipo, modulo]);
 
   const ordenados = useMemo(() => {
     return [...filtrados].sort((a, b) => {
@@ -246,6 +280,16 @@ export default function AdminAuditoria() {
           />
         </label>
         <div className="alunos-filtro">
+          <label htmlFor="auditoria-modulo">Módulo</label>
+          <select id="auditoria-modulo" value={modulo} onChange={(event) => atualizarFiltro(setModulo, event.target.value)}>
+            {MODULOS.map((item) => (
+              <option key={item} value={item}>
+                {item === "Todos" ? "Todos os módulos" : `${item}s`}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="alunos-filtro">
           <label htmlFor="auditoria-tipo">Tipo de ação</label>
           <select id="auditoria-tipo" value={tipo} onChange={(event) => atualizarFiltro(setTipo, event.target.value)}>
             {TIPOS.map((item) => (
@@ -292,6 +336,7 @@ export default function AdminAuditoria() {
                               <strong>{registro.titulo}</strong>
                               {registro.descricao && <p>{registro.descricao}</p>}
                               <div className="admin-auditoria-evento-meta">
+                                <span>{registro.modulo}</span>
                                 <span>{registro.responsavel}</span>
                                 <span>{registro.horario}</span>
                               </div>

@@ -76,8 +76,6 @@ const MENU_ADMIN = [
 ];
 
 function lerAvatarSidebar() {
-  const direto = localStorage.getItem("avatarUsuario");
-  if (direto) return direto;
   try {
     const u = JSON.parse(localStorage.getItem("usuario") || "{}");
     return u.avatar || "";
@@ -87,7 +85,6 @@ function lerAvatarSidebar() {
 }
 
 function persistirAvatarGlobal(novaUrl) {
-  localStorage.setItem("avatarUsuario", novaUrl);
   try {
     const u = JSON.parse(localStorage.getItem("usuario") || "{}");
     u.avatar = novaUrl;
@@ -135,9 +132,11 @@ function Sidebar({ tipo = "monitor", mobileOpen = false, onCloseMobile }) {
     }
 
     window.addEventListener("avatar-atualizado", sincronizarSidebar);
+    window.addEventListener("admin-profile-updated", sincronizarSidebar);
     window.addEventListener("storage", sincronizarSidebar);
     return () => {
       window.removeEventListener("avatar-atualizado", sincronizarSidebar);
+      window.removeEventListener("admin-profile-updated", sincronizarSidebar);
       window.removeEventListener("storage", sincronizarSidebar);
     };
   }, []);
@@ -182,6 +181,8 @@ function Sidebar({ tipo = "monitor", mobileOpen = false, onCloseMobile }) {
   }
 
   function handleLogout() {
+    document.documentElement.setAttribute("data-theme", "light");
+    localStorage.removeItem("avatarUsuario");
     logout();
     navigate("/login");
   }

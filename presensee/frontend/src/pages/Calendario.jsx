@@ -319,6 +319,7 @@ export default function Calendario() {
 
   async function salvarAtestado(e) {
     e.preventDefault();
+    const formEl = e.currentTarget;
     setErro("");
     setMensagem("");
 
@@ -365,7 +366,7 @@ export default function Calendario() {
 
       setAtestado({ alunoId: "", aluno: "", turma: "", inicio: "", fim: "", observacao: "" });
       setArquivoAtestado(null);
-      e.currentTarget.reset();
+      formEl?.reset();
       setMensagem("Atestado enviado para a nuvem e registrado no histórico do estudante!");
     } catch (error) {
       console.error("Erro ao registrar justificativa:", error.response?.data || error);
