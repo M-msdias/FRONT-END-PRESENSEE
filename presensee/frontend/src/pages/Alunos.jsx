@@ -8,20 +8,23 @@ import "../styles/AlunosRisco.css";
 
 const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
-const normalizeTurma = (valor) => {
-  if (!valor) return "";
-  const match = String(valor).match(/(\d)\s*(?:º\s*Ano\s*)?([A-Z])/i);
-  return match ? `${match[1]}${match[2].toUpperCase()}` : String(valor);
-};
+function formatarTurmaCompleta(classObj, fallbackNome) {
+  const nome = classObj?.name || fallbackNome || "Sem turma";
+  const curso = classObj?.course || "";
+  const turno = classObj?.shift || "";
+  const detalhe = [curso, turno].filter(Boolean).join(" · ");
+  return { nome, detalhe, rotuloCompleto: detalhe ? `${nome} (${detalhe})` : nome };
+}
 
 export default function Alunos() {
   const location = useLocation();
   const navigate = useNavigate();
 
   const [alunos, setAlunos] = useState([]);
+  const [turmasLista, setTurmasLista] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState("");
-  const [turmaSelecionada, setTurmaSelecionada] = useState(() => normalizeTurma(location.state?.turma));
+  const [turmaSelecionada, setTurmaSelecionada] = useState(() => location.state?.turma || "");
   const [riscoSelecionado, setRiscoSelecionado] = useState("");
   const [frequenciaSelecionada, setFrequenciaSelecionada] = useState("");
   const [ordenacao, setOrdenacao] = useState({ campo: "nome", direcao: "asc" });
@@ -32,45 +35,77 @@ export default function Alunos() {
   const [mesSelecionado, setMesSelecionado] = useState(MESES[new Date().getMonth()]);
   const [mesNotas, setMesNotas] = useState(MESES[new Date().getMonth()]);
 
+  const [alunoEditando, setAlunoEditando] = useState(null);
+  const [formAluno, setFormAluno] = useState({
+    name: "",
+    registration: "",
+    classId: "",
+    email: "",
+    guardianName: "",
+    guardianPhone: "",
+  });
+  const [salvandoAluno, setSalvandoAluno] = useState(false);
+  const [erroEdicaoAluno, setErroEdicaoAluno] = useState("");
+
   const alertaProcessado = useRef(false);
 
-  useEffect(() => {
-    async function carregarAlunos() {
-      try {
-        const response = await api.get("/students");
+  async function carregarDados() {
+    setLoading(true);
+    try {
+      const [resAlunos, resTurmas] = await Promise.all([
+        api.get("/students"),
+        api.get("/classes").catch(() => ({ data: [] })),
+      ]);
 
-        const alunosFormatados = response.data.map((aluno) => {
-          const frequencia = aluno.attendanceRate ?? aluno.frequencia ?? 100;
-          return {
-            ...aluno,
-            id: aluno.id || aluno._id,
-            nome: aluno.name || aluno.nome || "Aluno sem nome",
-            foto:
-              aluno.biometricDataUrl ||
-              aluno.biometryUrl ||
-              aluno.photoUrl ||
-              aluno.avatar ||
-              "",
-            turma: normalizeTurma(aluno.class?.name || aluno.turma || "N/A"),
-            frequencia: frequencia,
-            risco: aluno.riskLevel || (frequencia < 75 ? "Alto" : frequencia < 90 ? "Médio" : "Baixo"),
-            ultimaAtualizacao: aluno.updatedAt ? new Date(aluno.updatedAt).toLocaleDateString("pt-BR") : "—"
-          };
-        });
+      setTurmasLista(Array.isArray(resTurmas.data) ? resTurmas.data : []);
 
-        setAlunos(alunosFormatados);
-      } catch (error) {
-        console.error("Erro ao buscar alunos:", error);
-      } finally {
-        setLoading(false);
-      }
+      const alunosFormatados = resAlunos.data.map((aluno) => {
+        const frequencia = aluno.attendanceRate ?? aluno.frequencia ?? 100;
+        const turmaInfo = formatarTurmaCompleta(aluno.class, aluno.turma);
+        return {
+          ...aluno,
+          id: aluno.id || aluno._id,
+          nome: aluno.name || aluno.nome || "Aluno sem nome",
+          foto:
+            aluno.biometricDataUrl ||
+            aluno.biometryUrl ||
+            aluno.photoUrl ||
+            aluno.avatar ||
+            "",
+          turma: turmaInfo.nome,
+          turmaDetalhe: turmaInfo.detalhe,
+          turmaRotuloCompleto: turmaInfo.rotuloCompleto,
+          frequencia,
+          risco: aluno.riskLevel || aluno.risk || (frequencia < 75 ? "Alto" : frequencia < 90 ? "Médio" : "Baixo"),
+          ultimaAtualizacao: aluno.updatedAt ? new Date(aluno.updatedAt).toLocaleDateString("pt-BR") : "—",
+        };
+      });
+
+      setAlunos(alunosFormatados);
+    } catch (error) {
+      console.error("Erro ao buscar alunos:", error);
+    } finally {
+      setLoading(false);
     }
+  }
 
-    carregarAlunos();
+  useEffect(() => {
+    carregarDados();
   }, []);
 
-  const turmas = useMemo(() => [...new Set(alunos.map((aluno) => aluno.turma))]
-    .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true })), [alunos]);
+  const turmasFiltro = useMemo(() => {
+    const mapa = new Map();
+    turmasLista.forEach((t) => {
+      const info = formatarTurmaCompleta(t, t.name);
+      mapa.set(info.nome, info.rotuloCompleto);
+    });
+    alunos.forEach((a) => {
+      if (a.turma && !mapa.has(a.turma)) {
+        mapa.set(a.turma, a.turmaRotuloCompleto);
+      }
+    });
+    return Array.from(mapa.entries()).sort((a, b) => a[0].localeCompare(b[0], "pt-BR", { numeric: true }));
+  }, [turmasLista, alunos]);
 
   const resumo = useMemo(() => ({
     Baixo: alunos.filter((a) => a.risco === "Baixo").length,
@@ -79,11 +114,16 @@ export default function Alunos() {
   }), [alunos]);
 
   const alunosFiltrados = useMemo(() => alunos.filter((aluno) => {
-    const nomeOk = aluno.nome.toLocaleLowerCase("pt-BR").includes(busca.trim().toLocaleLowerCase("pt-BR"));
+    const termo = busca.trim().toLocaleLowerCase("pt-BR");
+    const nomeOk =
+      !termo ||
+      aluno.nome.toLocaleLowerCase("pt-BR").includes(termo) ||
+      String(aluno.registration || "").toLowerCase().includes(termo);
     const turmaOk = !turmaSelecionada || aluno.turma === turmaSelecionada;
     const riscoOk = !riscoSelecionado || aluno.risco === riscoSelecionado;
     const f = aluno.frequencia;
-    const frequenciaOk = !frequenciaSelecionada ||
+    const frequenciaOk =
+      !frequenciaSelecionada ||
       (frequenciaSelecionada === "acima-80" && f > 80) ||
       (frequenciaSelecionada === "70-80" && f >= 70 && f <= 80) ||
       (frequenciaSelecionada === "abaixo-70" && f < 70);
@@ -112,6 +152,7 @@ export default function Alunos() {
       const incidentesLimpos = (res.data.incidents || []).filter((inc) => inc.type !== "FICHA_CADASTRO");
       setAlunoSelecionado((prev) => ({
         ...prev,
+        ...res.data,
         foto:
           res.data.biometricDataUrl ||
           res.data.biometryUrl ||
@@ -120,7 +161,7 @@ export default function Alunos() {
           "",
         grades: res.data.grades || [],
         incidents: incidentesLimpos,
-        attendances: res.data.attendances || []
+        attendances: res.data.attendances || [],
       }));
     } catch (error) {
       console.error("Erro ao carregar detalhes completos do aluno:", error);
@@ -136,6 +177,73 @@ export default function Alunos() {
       navigate("/alunos", { replace: true, state: {} });
     }
   };
+
+  async function abrirEdicaoAluno(aluno, e) {
+    if (e) e.stopPropagation();
+    setErroEdicaoAluno("");
+    setAlunoSelecionado(null);
+    setAlunoEditando(aluno);
+    setFormAluno({
+      name: aluno.nome || "",
+      registration: aluno.registration || "",
+      classId: aluno.classId || aluno.class?.id || "",
+      email: aluno.email || "",
+      guardianName: aluno.guardianName || "",
+      guardianPhone: aluno.guardianPhone || "",
+    });
+
+    try {
+      const res = await api.get(`/students/${aluno.id}`);
+      setFormAluno({
+        name: res.data.name || aluno.nome || "",
+        registration: res.data.registration || aluno.registration || "",
+        classId: res.data.classId || aluno.classId || "",
+        email: res.data.email || "",
+        guardianName: res.data.guardianName || "",
+        guardianPhone: res.data.guardianPhone || "",
+      });
+    } catch (err) {
+      console.error("Erro ao carregar ficha do aluno para edição:", err);
+    }
+  }
+
+  async function salvarEdicaoAluno(e) {
+    e.preventDefault();
+    if (!alunoEditando) return;
+    setErroEdicaoAluno("");
+    setSalvandoAluno(true);
+
+    try {
+      await api.patch(`/students/${alunoEditando.id}`, {
+        name: formAluno.name.trim(),
+        registration: formAluno.registration.trim(),
+        classId: formAluno.classId,
+        email: formAluno.email.trim(),
+        guardianName: formAluno.guardianName.trim(),
+        guardianPhone: formAluno.guardianPhone.trim(),
+      });
+      setAlunoEditando(null);
+      await carregarDados();
+    } catch (error) {
+      setErroEdicaoAluno(error.response?.data?.error || "Não foi possível atualizar o aluno.");
+    } finally {
+      setSalvandoAluno(false);
+    }
+  }
+
+  async function excluirAluno(aluno, e) {
+    if (e) e.stopPropagation();
+    const confirmar = window.confirm(`Deseja realmente excluir o aluno "${aluno.nome}"?`);
+    if (!confirmar) return;
+
+    try {
+      await api.delete(`/students/${aluno.id}`);
+      if (alunoSelecionado?.id === aluno.id) fecharAluno();
+      await carregarDados();
+    } catch (error) {
+      alert(error.response?.data?.error || "Não foi possível excluir o aluno.");
+    }
+  }
 
   useEffect(() => {
     if (alunos.length > 0 && !alertaProcessado.current) {
@@ -172,7 +280,7 @@ export default function Alunos() {
     const freqReal = alunoSelecionado?.attendances?.find(a => new Date(a.date).getDate() === dia && new Date(a.date).getMonth() === MESES.indexOf(mesSelecionado));
     return {
       dia,
-      presente: freqReal ? freqReal.status === 'PRESENT' : (dia % 7 !== 0 && dia !== 5)
+      presente: freqReal ? freqReal.status === "PRESENT" : (dia % 7 !== 0 && dia !== 5)
     };
   });
 
@@ -197,7 +305,7 @@ export default function Alunos() {
               color: "#ffffff",
               fontWeight: "600",
               cursor: "pointer",
-              fontSize: "14px"
+              fontSize: "14px",
             }}
           >
             + Novo Aluno
@@ -242,7 +350,7 @@ export default function Alunos() {
             <input
               className="search-aluno"
               type="search"
-              placeholder="Buscar aluno por nome..."
+              placeholder="Buscar aluno por nome ou matrícula..."
               value={busca}
               onChange={(e) => atualizarFiltro(setBusca, e.target.value)}
               aria-label="Buscar aluno por nome"
@@ -252,7 +360,9 @@ export default function Alunos() {
             <label htmlFor="alunos-turma">Turma</label>
             <select id="alunos-turma" value={turmaSelecionada} onChange={(e) => atualizarFiltro(setTurmaSelecionada, e.target.value)}>
               <option value="">Todas as turmas</option>
-              {turmas.map((turma) => <option value={turma} key={turma}>{turma}</option>)}
+              {turmasFiltro.map(([valor, rotulo]) => (
+                <option value={valor} key={valor}>{rotulo}</option>
+              ))}
             </select>
           </div>
           <div className="alunos-filtro">
@@ -278,7 +388,7 @@ export default function Alunos() {
             <table className="students-table">
               <thead>
                 <tr>
-                  {[["nome", "Aluno"], ["turma", "Turma"], ["frequencia", "Frequência"], ["risco", "Risco"]].map(([campo, titulo]) => (
+                  {[["nome", "Aluno"], ["turma", "Turma / Modalidade"], ["frequencia", "Frequência"], ["risco", "Risco"]].map(([campo, titulo]) => (
                     <th scope="col" key={campo}>
                       <button type="button" className="alunos-ordenar" onClick={() => ordenar(campo)}>
                         {titulo} <span aria-hidden="true">↕</span>
@@ -310,10 +420,24 @@ export default function Alunos() {
                               iniciais
                             )}
                           </span>
-                          <strong>{aluno.nome}</strong>
+                          <div>
+                            <strong>{aluno.nome}</strong>
+                            {aluno.registration && (
+                              <small style={{ display: "block", color: "#64748b", fontSize: "11px" }}>
+                                Mat. {aluno.registration}
+                              </small>
+                            )}
+                          </div>
                         </div>
                       </td>
-                      <td><span className="alunos-turma-tag">{aluno.turma}</span></td>
+                      <td>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                          <span className="alunos-turma-tag">{aluno.turma}</span>
+                          {aluno.turmaDetalhe && (
+                            <small style={{ fontSize: "11px", color: "#64748b" }}>{aluno.turmaDetalhe}</small>
+                          )}
+                        </div>
+                      </td>
                       <td>
                         <div className="alunos-frequencia">
                           <span>{aluno.frequencia}%</span>
@@ -323,9 +447,49 @@ export default function Alunos() {
                       <td><span className={`risk-status ${aluno.risco.toLowerCase()}`}><span className="risk-dot" />{aluno.risco}</span></td>
                       <td className="alunos-atualizacao">{aluno.ultimaAtualizacao}</td>
                       <td>
-                        <div className="alunos-acoes">
-                          <button type="button" className="alunos-acao" onClick={() => abrirAluno(aluno)} aria-label={`Ver detalhes de ${aluno.nome}`} title="Ver detalhes"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-                          <button type="button" className="alunos-acao" onClick={() => navigate(`/alunos/${aluno.id}`)} aria-label={`Abrir perfil de ${aluno.nome}`} title="Abrir perfil">⋮</button>
+                        <div className="alunos-acoes" style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                          <button
+                            type="button"
+                            className="alunos-acao"
+                            onClick={() => abrirAluno(aluno)}
+                            aria-label={`Ver detalhes de ${aluno.nome}`}
+                            title="Ver detalhes"
+                          >
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => abrirEdicaoAluno(aluno, e)}
+                            title="Editar aluno"
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              border: "1px solid #cbd5e1",
+                              background: "#fff",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => excluirAluno(aluno, e)}
+                            title="Excluir aluno"
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              border: "1px solid #fecaca",
+                              background: "#fef2f2",
+                              color: "#b91c1c",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                            }}
+                          >
+                            Excluir
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -352,6 +516,7 @@ export default function Alunos() {
         </section>
       </div>
 
+      {/* MODAL DE VISUALIZAÇÃO DO ALUNO */}
       {alunoSelecionado && (
         <div className="student-modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) fecharAluno(); }} role="presentation">
           <div className="student-modal" role="dialog" aria-modal="true" aria-label={`Informações de ${alunoSelecionado.nome}`}>
@@ -371,7 +536,7 @@ export default function Alunos() {
               </div>
               <div>
                 <h2>{alunoSelecionado.nome}</h2>
-                <p>Turma {alunoSelecionado.turma}</p>
+                <p>{alunoSelecionado.turmaRotuloCompleto}</p>
               </div>
               <span className={`modal-risk ${alunoSelecionado.risco.toLowerCase()}`}>
                 Risco {alunoSelecionado.risco}
@@ -490,7 +655,7 @@ export default function Alunos() {
                       return (
                         <article className="occurrence-item" key={inc.id}>
                           <div className="occurrence-icon">
-                            {inc.type?.toLowerCase().includes('falta') ? '⚠️' : '📝'}
+                            {inc.type?.toLowerCase().includes("falta") ? "⚠️" : "📝"}
                           </div>
                           <div className="occurrence-content">
                             <div className="occurrence-top">
@@ -511,6 +676,139 @@ export default function Alunos() {
                 <button className="back-frequency" onClick={() => setModalAtivo("principal")}>← Voltar</button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE EDIÇÃO DO ALUNO (CRUD COMPLETO) */}
+      {alunoEditando && (
+        <div className="student-modal-overlay" onClick={() => setAlunoEditando(null)}>
+          <div
+            className="student-modal"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar aluno"
+            style={{ maxWidth: "540px" }}
+          >
+            <button className="close-modal" onClick={() => setAlunoEditando(null)} aria-label="Fechar edição">
+              ×
+            </button>
+            <h2 style={{ marginTop: 0 }}>Editar Aluno</h2>
+
+            <form onSubmit={salvarEdicaoAluno} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", fontWeight: 600 }}>
+                Nome Completo *
+                <input
+                  type="text"
+                  value={formAluno.name}
+                  onChange={(e) => setFormAluno({ ...formAluno, name: e.target.value })}
+                  required
+                  style={{ padding: "9px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                />
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", fontWeight: 600 }}>
+                  Matrícula *
+                  <input
+                    type="text"
+                    value={formAluno.registration}
+                    onChange={(e) => setFormAluno({ ...formAluno, registration: e.target.value })}
+                    required
+                    style={{ padding: "9px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", fontWeight: 600 }}>
+                  E-mail
+                  <input
+                    type="email"
+                    value={formAluno.email}
+                    onChange={(e) => setFormAluno({ ...formAluno, email: e.target.value })}
+                    style={{ padding: "9px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                </label>
+              </div>
+
+              {/* TOGGLE LIST DE TURMAS NA EDIÇÃO DO ALUNO */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 600 }}>Turma *</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", maxHeight: "150px", overflowY: "auto" }}>
+                  {turmasLista.map((t) => {
+                    const id = t.id || t._id;
+                    const ativo = String(formAluno.classId) === String(id);
+                    const info = formatarTurmaCompleta(t, t.name);
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setFormAluno({ ...formAluno, classId: id })}
+                        style={{
+                          padding: "7px 12px",
+                          borderRadius: "8px",
+                          border: ativo ? "2px solid #633df2" : "1px solid #cbd5e1",
+                          background: ativo ? "#633df2" : "#fff",
+                          color: ativo ? "#fff" : "#1e293b",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        <div>{info.nome}</div>
+                        {info.detalhe && <div style={{ fontSize: "10px", opacity: 0.85 }}>{info.detalhe}</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", fontWeight: 600 }}>
+                  Responsável
+                  <input
+                    type="text"
+                    value={formAluno.guardianName}
+                    onChange={(e) => setFormAluno({ ...formAluno, guardianName: e.target.value })}
+                    style={{ padding: "9px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                </label>
+
+                <label style={{ display: "flex", flexDirection: "column", gap: "4px", fontSize: "13px", fontWeight: 600 }}>
+                  Telefone do Responsável
+                  <input
+                    type="tel"
+                    value={formAluno.guardianPhone}
+                    onChange={(e) => setFormAluno({ ...formAluno, guardianPhone: e.target.value })}
+                    style={{ padding: "9px", borderRadius: "8px", border: "1px solid #cbd5e1" }}
+                  />
+                </label>
+              </div>
+
+              {erroEdicaoAluno && (
+                <p style={{ color: "#b91c1c", background: "#fee2e2", padding: "8px 12px", borderRadius: "6px", fontSize: "13px", margin: 0 }}>
+                  {erroEdicaoAluno}
+                </p>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => setAlunoEditando(null)}
+                  style={{ padding: "9px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoAluno}
+                  style={{ padding: "9px 16px", borderRadius: "8px", border: "none", background: "#633df2", color: "#fff", fontWeight: 600, cursor: "pointer" }}
+                >
+                  {salvandoAluno ? "Salvando..." : "Salvar Alterações"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
