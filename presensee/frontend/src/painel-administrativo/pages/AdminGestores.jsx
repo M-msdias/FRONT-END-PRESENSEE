@@ -23,7 +23,6 @@ export default function AdminGestores() {
     async function carregarDados() {
       try {
         setCarregando(true);
-        // Carrega utilizadores e escolas em simultâneo
         const [resUsers, resEscolas] = await Promise.all([
           api.get("/users"),
           api.get("/escolas")
@@ -34,18 +33,20 @@ export default function AdminGestores() {
         
         setEscolas(listaEscolas);
 
-        const apenasGestores = listaUsuarios.filter(user => 
+        const apenasGestores = listaUsuarios.filter((user) => 
           user.role === "MANAGER" || user.role === "GESTOR" || user.perfil === "MANAGER"
         );
         
-        // CORREÇÃO AQUI: Usa 'escolaId' em vez de 'schoolId'
-        const gestoresComEscola = apenasGestores.map(gestor => {
-          const escolaVinculada = listaEscolas.find(e => e.id === gestor.escolaId);
+        const gestoresComEscola = apenasGestores.map((gestor) => {
+          const escolaVinculada = listaEscolas.find((e) => e.id === gestor.escolaId) || gestor.escola;
+          // O status do gestor reflete o status da escola à qual está vinculado
+          const statusVinculado = escolaVinculada?.status || gestor.status || "Pendente";
           
           return {
             ...gestor,
             nome: gestor.name || gestor.nome,
-            escolaNome: escolaVinculada ? escolaVinculada.nome : null
+            escolaNome: escolaVinculada ? escolaVinculada.nome : null,
+            status: statusVinculado
           };
         });
 
@@ -65,8 +66,7 @@ export default function AdminGestores() {
     return gestores.filter((gestor) => {
       const correspondeStatus =
         filtro === "Todas" || 
-        gestor.status === filtro || 
-        String(gestor.status || "Ativa").toUpperCase() === filtro.toUpperCase();
+        String(gestor.status || "").toUpperCase() === filtro.toUpperCase();
 
       const texto = [
         gestor.nome,
@@ -83,8 +83,8 @@ export default function AdminGestores() {
 
   const gestoresOrdenados = useMemo(() => {
     return [...gestoresFiltrados].sort((a, b) => {
-      const valA = a[ordenacao.campo] || (ordenacao.campo === 'nome' ? a.name : '');
-      const valB = b[ordenacao.campo] || (ordenacao.campo === 'nome' ? b.name : '');
+      const valA = a[ordenacao.campo] || (ordenacao.campo === "nome" ? a.name : "");
+      const valB = b[ordenacao.campo] || (ordenacao.campo === "nome" ? b.name : "");
       
       const primeiro = String(valA ?? "");
       const segundo = String(valB ?? "");
@@ -140,7 +140,11 @@ export default function AdminGestores() {
   }
 
   if (carregando) {
-    return <div className="alunos-page admin-gestores-page" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>Carregando gestores...</div>;
+    return (
+      <div className="alunos-page admin-gestores-page" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+        Carregando gestores...
+      </div>
+    );
   }
 
   return (
@@ -150,8 +154,7 @@ export default function AdminGestores() {
           <div>
             <h1>Gestores escolares</h1>
             <p>
-              Acompanhe os gestores responsáveis pelas
-              instituições cadastradas no PresenSee.
+              Cada gestor é vinculado automaticamente à sua instituição no momento do cadastro da escola.
             </p>
           </div>
         </div>
@@ -162,10 +165,7 @@ export default function AdminGestores() {
         aria-label="Filtros de gestores"
       >
         <label className="alunos-busca">
-          <span
-            className="alunos-search-icon"
-            aria-hidden="true"
-          >
+          <span className="alunos-search-icon" aria-hidden="true">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -242,7 +242,7 @@ export default function AdminGestores() {
             <tbody>
               {gestoresPaginados.map((gestor) => {
                 const nomeExibicao = gestor.nome || "Sem nome";
-                const statusExibicao = gestor.status || "Ativa"; 
+                const statusExibicao = gestor.status || "Pendente"; 
 
                 return (
                   <tr key={gestor.id}>

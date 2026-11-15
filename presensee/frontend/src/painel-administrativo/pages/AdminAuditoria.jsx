@@ -5,13 +5,64 @@ import "../styles/admin.css";
 import "../styles/AdminAuditoria.css";
 
 const TIPOS = ["Todas", "Cadastro", "Alteração", "Exclusão", "Outros"];
+const MODULOS = ["Todos", "Escola", "Chamado", "Comunicado"];
 
-function classificarAcao(acao) {
-  const valor = String(acao || "").toLocaleLowerCase("pt-BR");
-  if (valor.includes("cadastrad") || valor.includes("criad")) return "Cadastro";
-  if (valor.includes("excluíd") || valor.includes("excluid") || valor.includes("deletad")) return "Exclusão";
-  if (valor.includes("alterad") || valor.includes("atualizad") || valor.includes("editad")) return "Alteração";
+function normalizarTipo(tipoBruto, tituloTexto, descricaoTexto) {
+  const titulo = String(tituloTexto || "").toLocaleLowerCase("pt-BR");
+  const combinado = `${tipoBruto || ""} ${titulo} ${descricaoTexto || ""}`.toLocaleLowerCase("pt-BR");
+
+  // 1. Verifica primeiro a ação principal no título
+  if (
+    titulo.includes("exclu") ||
+    titulo.includes("delet") ||
+    titulo.includes("remov")
+  ) {
+    return "Exclusão";
+  }
+
+  if (
+    titulo.includes("cadastr") ||
+    titulo.includes("criad") ||
+    titulo.includes("abert") ||
+    titulo.includes("create")
+  ) {
+    return "Cadastro";
+  }
+
+  if (
+    titulo.includes("alter") ||
+    titulo.includes("atualiz") ||
+    titulo.includes("edit") ||
+    titulo.includes("publicad") ||
+    titulo.includes("status") ||
+    titulo.includes("reenvi") ||
+    titulo.includes("resolvid") ||
+    titulo.includes("andamento") ||
+    titulo.includes("fechad")
+  ) {
+    return "Alteração";
+  }
+
+  // 2. Fallback pelo texto completo caso o título seja genérico
+  if (combinado.includes("exclu") || combinado.includes("delet") || combinado.includes("remov")) {
+    return "Exclusão";
+  }
+  if (combinado.includes("cadastr") || combinado.includes("criad") || combinado.includes("abert")) {
+    return "Cadastro";
+  }
+  if (combinado.includes("alter") || combinado.includes("atualiz") || combinado.includes("edit")) {
+    return "Alteração";
+  }
+
   return "Outros";
+}
+
+function normalizarModulo(entidadeBruta, tipoBruto, tituloTexto) {
+  const primario = `${entidadeBruta || ""} ${tipoBruto || ""} ${tituloTexto || ""}`.toLocaleLowerCase("pt-BR");
+  if (primario.includes("comunicado")) return "Comunicado";
+  if (primario.includes("chamado")) return "Chamado";
+  if (primario.includes("escola")) return "Escola";
+  return "Sistema";
 }
 
 function formatarDia(data) {
@@ -40,11 +91,13 @@ function IconeAcao({ tipo }) {
 
 function exportarCSV(registros) {
   const linhas = [
-    ["Data", "Tipo", "Ação", "Responsável"],
+    ["Data", "Módulo", "Tipo", "Ação", "Descrição", "Responsável"],
     ...registros.map((registro) => [
       registro.horario ? `${registro.dia} às ${registro.horario}` : "",
+      registro.modulo,
       registro.tipo,
       registro.titulo || registro.acao || "",
+      registro.descricao || "",
       registro.responsavel || "Sistema"
     ])
   ];
@@ -79,36 +132,37 @@ export default function AdminAuditoria() {
 
   const [busca, setBusca] = useState("");
   const [tipo, setTipo] = useState("Todas");
+  const [modulo, setModulo] = useState("Todos");
   const [ordenacao, setOrdenacao] = useState("recentes");
   const [pagina, setPagina] = useState(1);
   const [itensPorPagina, setItensPorPagina] = useState(10);
   const [expandidos, setExpandidos] = useState([]);
 
-  useEffect(() => {
-    async function fetchLogs() {
-      try {
-        setCarregando(true);
-        const response = await api.get("/auditoria");
-        setLogs(response.data);
-      } catch (error) {
-        console.error("Erro ao buscar auditoria:", error);
-        setErroApi("Erro ao carregar o histórico de auditoria. Verifique a conexão com o servidor.");
-      } finally {
-        setCarregando(false);
-      }
+  async function fetchLogs() {
+    try {
+      setCarregando(true);
+      setErroApi("");
+      const response = await api.get("/auditoria");
+      setLogs(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error("Erro ao buscar auditoria:", error);
+      setErroApi("Erro ao carregar o histórico de auditoria. Verifique a conexão com o servidor.");
+    } finally {
+      setCarregando(false);
     }
+  }
+
+  useEffect(() => {
     fetchLogs();
   }, []);
 
   const registros = useMemo(() => {
     return logs.map((log, indice) => {
-      // Usa a data do banco de dados (criadoEm)
       const dataObj = log.criadoEm ? new Date(log.criadoEm) : new Date();
-      
-      // Se o banco enviar titulo/descricao/tipo separados, usa-os. Senão, extrai da string "acao"
       const titulo = log.titulo || extrairDetalhes(log.acao).titulo;
       const descricao = log.descricao || extrairDetalhes(log.acao).descricao;
-      const tipoAcao = log.tipo || classificarAcao(log.acao || titulo);
+      const tipoAcao = normalizarTipo(log.tipo, titulo, descricao);
+      const moduloAcao = normalizarModulo(log.entidade, log.tipo, titulo);
 
       return {
         ...log,
@@ -116,11 +170,14 @@ export default function AdminAuditoria() {
         indice,
         dataObj,
         dia: formatarDia(dataObj),
-        horario: !Number.isNaN(dataObj.getTime()) ? dataObj.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—",
+        horario: !Number.isNaN(dataObj.getTime())
+          ? dataObj.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+          : "—",
         tipo: tipoAcao,
+        modulo: moduloAcao,
         titulo,
         descricao,
-        responsavel: log.responsavel || "Superadmin"
+        responsavel: log.responsavel || "Administrador"
       };
     });
   }, [logs]);
@@ -129,13 +186,14 @@ export default function AdminAuditoria() {
     const termo = busca.trim().toLocaleLowerCase("pt-BR");
     return registros.filter((registro) => {
       const correspondeTipo = tipo === "Todas" || registro.tipo === tipo;
-      const texto = [registro.titulo, registro.descricao, registro.responsavel, registro.tipo]
+      const correspondeModulo = modulo === "Todos" || registro.modulo === modulo;
+      const texto = [registro.titulo, registro.descricao, registro.responsavel, registro.tipo, registro.modulo, registro.entidade]
         .filter(Boolean)
         .join(" ")
         .toLocaleLowerCase("pt-BR");
-      return correspondeTipo && texto.includes(termo);
+      return correspondeTipo && correspondeModulo && texto.includes(termo);
     });
-  }, [registros, busca, tipo]);
+  }, [registros, busca, tipo, modulo]);
 
   const ordenados = useMemo(() => {
     return [...filtrados].sort((a, b) => {
@@ -170,11 +228,15 @@ export default function AdminAuditoria() {
   }
 
   function alternarDetalhes(chave) {
-    setExpandidos((atual) => atual.includes(chave) ? atual.filter((item) => item !== chave) : [...atual, chave]);
+    setExpandidos((atual) => (atual.includes(chave) ? atual.filter((item) => item !== chave) : [...atual, chave]));
   }
 
   if (carregando) {
-      return <div className="alunos-page admin-auditoria-page" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>Carregando auditoria...</div>;
+    return (
+      <div className="alunos-page admin-auditoria-page" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+        Carregando auditoria...
+      </div>
+    );
   }
 
   return (
@@ -184,12 +246,21 @@ export default function AdminAuditoria() {
           <h1>Auditoria</h1>
           <p>Acompanhe o histórico de atividades administrativas realizadas no PresenSee.</p>
         </div>
-        <button type="button" className="admin-auditoria-exportar" disabled={ordenados.length === 0} onClick={() => exportarCSV(ordenados)}>
-          Exportar CSV
-        </button>
+        <div style={{ display: "flex", gap: "10px" }}>
+          <button type="button" className="admin-auditoria-exportar" onClick={fetchLogs} title="Atualizar lista">
+            Atualizar
+          </button>
+          <button type="button" className="admin-auditoria-exportar" disabled={ordenados.length === 0} onClick={() => exportarCSV(ordenados)}>
+            Exportar CSV
+          </button>
+        </div>
       </header>
 
-      {erroApi && <p style={{ padding: '15px', background: '#ffe7e9', color: '#d9233a', borderRadius: '8px', marginBottom: '20px', marginLeft: '30px', marginRight: '30px' }} role="alert">{erroApi}</p>}
+      {erroApi && (
+        <p style={{ padding: "15px", background: "#ffe7e9", color: "#d9233a", borderRadius: "8px", marginBottom: "20px", marginLeft: "30px", marginRight: "30px" }} role="alert">
+          {erroApi}
+        </p>
+      )}
 
       <section className="alunos-filtros-panel admin-auditoria-filtros">
         <label className="alunos-busca">
@@ -199,12 +270,33 @@ export default function AdminAuditoria() {
               <path d="m16 16 5 5" />
             </svg>
           </span>
-          <input className="search-aluno" type="search" value={busca} placeholder="Pesquisar atividade ou responsável..." aria-label="Pesquisar auditoria" onChange={(event) => atualizarFiltro(setBusca, event.target.value)} />
+          <input
+            className="search-aluno"
+            type="search"
+            value={busca}
+            placeholder="Pesquisar atividade ou responsável..."
+            aria-label="Pesquisar auditoria"
+            onChange={(event) => atualizarFiltro(setBusca, event.target.value)}
+          />
         </label>
+        <div className="alunos-filtro">
+          <label htmlFor="auditoria-modulo">Módulo</label>
+          <select id="auditoria-modulo" value={modulo} onChange={(event) => atualizarFiltro(setModulo, event.target.value)}>
+            {MODULOS.map((item) => (
+              <option key={item} value={item}>
+                {item === "Todos" ? "Todos os módulos" : `${item}s`}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="alunos-filtro">
           <label htmlFor="auditoria-tipo">Tipo de ação</label>
           <select id="auditoria-tipo" value={tipo} onChange={(event) => atualizarFiltro(setTipo, event.target.value)}>
-            {TIPOS.map((item) => <option key={item} value={item}>{item === "Todas" ? "Todas as ações" : item}</option>)}
+            {TIPOS.map((item) => (
+              <option key={item} value={item}>
+                {item === "Todas" ? "Todas as ações" : item}
+              </option>
+            ))}
           </select>
         </div>
         <div className="alunos-filtro">
@@ -218,7 +310,10 @@ export default function AdminAuditoria() {
 
       <section className="admin-auditoria-historico">
         <div className="admin-auditoria-historico-topo">
-          <div><h2>Histórico de atividades</h2><p>Registros de operações administrativas</p></div>
+          <div>
+            <h2>Histórico de atividades</h2>
+            <p>Registros de operações administrativas</p>
+          </div>
           <span>{filtrados.length} registros</span>
         </div>
 
@@ -241,11 +336,18 @@ export default function AdminAuditoria() {
                               <strong>{registro.titulo}</strong>
                               {registro.descricao && <p>{registro.descricao}</p>}
                               <div className="admin-auditoria-evento-meta">
+                                <span>{registro.modulo}</span>
                                 <span>{registro.responsavel}</span>
                                 <span>{registro.horario}</span>
                               </div>
                             </div>
-                            <button type="button" className="admin-auditoria-detalhes" onClick={() => alternarDetalhes(registro.chave)} aria-expanded={aberto} aria-label={`${aberto ? "Ocultar" : "Mostrar"} detalhes de ${registro.titulo}`}>
+                            <button
+                              type="button"
+                              className="admin-auditoria-detalhes"
+                              onClick={() => alternarDetalhes(registro.chave)}
+                              aria-expanded={aberto}
+                              aria-label={`${aberto ? "Ocultar" : "Mostrar"} detalhes de ${registro.titulo}`}
+                            >
                               {aberto ? "Ocultar" : "Detalhes"}
                             </button>
                           </div>
@@ -255,7 +357,9 @@ export default function AdminAuditoria() {
                               <div><dt>Tipo de ação</dt><dd>{registro.tipo}</dd></div>
                               <div><dt>Responsável</dt><dd>{registro.responsavel}</dd></div>
                               <div><dt>ID do Registro</dt><dd>{registro.id || "Não informado"}</dd></div>
-                              {registro.entidade && <div className="admin-auditoria-info-completa"><dt>Tabela/Entidade</dt><dd>{registro.entidade}</dd></div>}
+                              {registro.entidade && (
+                                <div className="admin-auditoria-info-completa"><dt>Tabela/Entidade</dt><dd>{registro.entidade}</dd></div>
+                              )}
                             </dl>
                           )}
                         </div>
@@ -267,7 +371,11 @@ export default function AdminAuditoria() {
             ))}
           </div>
         ) : (
-          <p className="admin-auditoria-vazio">{logs.length === 0 ? "Nenhuma atividade registrada no sistema." : "Nenhuma atividade corresponde aos filtros selecionados."}</p>
+          <p className="admin-auditoria-vazio">
+            {logs.length === 0
+              ? "Nenhuma atividade registrada no sistema ainda."
+              : "Nenhuma atividade corresponde aos filtros selecionados."}
+          </p>
         )}
 
         <footer className="alunos-paginacao">
@@ -280,7 +388,9 @@ export default function AdminAuditoria() {
           <label className="alunos-por-pagina">
             Itens por página
             <select value={itensPorPagina} onChange={(event) => { setItensPorPagina(Number(event.target.value)); setPagina(1); }}>
-              {[10, 20, 50].map((quantidade) => <option key={quantidade} value={quantidade}>{quantidade}</option>)}
+              {[10, 20, 50].map((quantidade) => (
+                <option key={quantidade} value={quantidade}>{quantidade}</option>
+              ))}
             </select>
           </label>
         </footer>

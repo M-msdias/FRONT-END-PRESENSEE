@@ -24,6 +24,33 @@ function normalizar(valor) {
     .trim()
 }
 
+function extrairAtestadoUrl(texto) {
+  if (!texto) return null
+  const match = String(texto).match(/\|\s*\[Atestado:\s*(https?:\/\/[^\]]+)\]/i)
+  return match ? match[1] : null
+}
+
+function limparDescricaoIntervencao(texto) {
+  if (!texto) return ""
+  const semTag = String(texto)
+    .replace(/\|\s*\[Atestado:\s*https?:\/\/[^\]]+\]/gi, "")
+    .trim()
+
+  if (semTag.startsWith("{") && semTag.endsWith("}")) {
+    try {
+      const obj = JSON.parse(semTag)
+      const partes = []
+      if (obj.guardianName) partes.push(`Responsável: ${obj.guardianName}`)
+      if (obj.guardianPhone) partes.push(`Tel.: ${obj.guardianPhone}`)
+      if (obj.notes) partes.push(obj.notes)
+      if (partes.length > 0) return partes.join(" · ")
+    } catch {
+      return semTag
+    }
+  }
+  return semTag
+}
+
 function Intervencao() {
   const [registros, setRegistros] = useState([])
   const [alunos, setAlunos] = useState([])
@@ -41,7 +68,7 @@ function Intervencao() {
   const [sugestoesAbertas, setSugestoesAbertas] = useState(false)
   const [opcaoAtiva, setOpcaoAtiva] = useState(0)
   const buscaRef = useRef(null)
-  
+
   const [tipo, setTipo] = useState(TIPOS_INTERVENCAO[0])
   const [data, setData] = useState(dataHoje())
   const [descricao, setDescricao] = useState("")
@@ -54,22 +81,29 @@ function Intervencao() {
           api.get("/students"),
           api.get("/incidents").catch(() => ({ data: [] }))
         ])
-        
-        // Mapeamento dos estudantes do banco para o padrão do componente
-        const alunosMap = (resAlunos.data || []).map(a => ({
+
+        const alunosMap = (resAlunos.data || []).map((a) => ({
           id: a.id || a._id,
           nome: a.name || a.nome,
           turma: a.class?.name || a.turma || "Sem Turma"
         }))
-        
-        // Mapeamento apenas dos incidentes que possuem um studentId (Intervenções)
+
         const intervencoesMap = (resIntervencoes.data || [])
-          .filter(i => i.studentId)
-          .map(i => ({
+          .filter(
+            (i) =>
+              i.studentId &&
+              i.type !== "FICHA_CADASTRO" &&
+              !i.isPending &&
+              i.type !== "PENDENCIA" &&
+              i.type !== "RESOLVIDO" &&
+              i.type !== "NOTA"
+          )
+          .map((i) => ({
             id: i.id || i._id,
             alunoId: i.studentId,
             tipo: i.type,
-            descricao: i.description,
+            descricao: limparDescricaoIntervencao(i.description),
+            atestadoUrl: extrairAtestadoUrl(i.description),
             data: i.date || i.createdAt
           }))
 
@@ -85,8 +119,10 @@ function Intervencao() {
   }, [])
 
   const turmas = useMemo(
-    () => [...new Set(alunos.map((aluno) => aluno.turma).filter(Boolean))]
-      .sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
+    () =>
+      [...new Set(alunos.map((aluno) => aluno.turma).filter(Boolean))].sort((a, b) =>
+        String(a).localeCompare(String(b), "pt-BR", { numeric: true })
+      ),
     [alunos]
   )
 
@@ -95,7 +131,8 @@ function Intervencao() {
     return alunos
       .filter((aluno) => {
         const turmaCorresponde = !turmaBusca || aluno.turma === turmaBusca
-        const nomeCorresponde = !pesquisa || normalizar(aluno.nome).includes(pesquisa) || normalizar(aluno.id).includes(pesquisa)
+        const nomeCorresponde =
+          !pesquisa || normalizar(aluno.nome).includes(pesquisa) || normalizar(aluno.id).includes(pesquisa)
         return turmaCorresponde && nomeCorresponde
       })
       .sort((a, b) => (a.nome || "").localeCompare(b.nome || "", "pt-BR"))
@@ -188,18 +225,19 @@ function Intervencao() {
         description: descricao.trim(),
         date: new Date(data).toISOString()
       }
-      
+
       const response = await api.post("/incidents", payload)
-      const respData = response.data;
-      
+      const respData = response.data
+
       const novoRegistro = {
         id: respData.id || respData._id || Math.random().toString(),
         alunoId: respData.studentId || payload.studentId,
         tipo: respData.type || payload.type,
-        descricao: respData.description || payload.description,
+        descricao: limparDescricaoIntervencao(respData.description || payload.description),
+        atestadoUrl: extrairAtestadoUrl(respData.description || payload.description),
         data: respData.date || respData.createdAt || payload.date
       }
-      
+
       setRegistros((anterior) => [novoRegistro, ...anterior])
       setBusca("")
       setTipoSelecionado("Todos")
@@ -214,7 +252,13 @@ function Intervencao() {
   }
 
   function iniciais(nome) {
-    return (nome || "").split(" ").filter(Boolean).slice(0, 2).map((parte) => parte[0]).join("").toUpperCase()
+    return (nome || "")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((parte) => parte[0])
+      .join("")
+      .toUpperCase()
   }
 
   function classeTipo(tipoIntervencao) {
@@ -257,17 +301,26 @@ function Intervencao() {
 
         <section className="intervencao-resumo">
           <article className="intervencao-card">
-            <div className="intervencao-card-topo"><span>Total de registros</span><span className="intervencao-icone">▤</span></div>
+            <div className="intervencao-card-topo">
+              <span>Total de registros</span>
+              <span className="intervencao-icone">▤</span>
+            </div>
             <strong>{registros.length}</strong>
             <small>Intervenções cadastradas nesta sessão</small>
           </article>
           <article className="intervencao-card">
-            <div className="intervencao-card-topo"><span>Tipos disponíveis</span><span className="intervencao-icone">◎</span></div>
+            <div className="intervencao-card-topo">
+              <span>Tipos disponíveis</span>
+              <span className="intervencao-icone">◎</span>
+            </div>
             <strong>{TIPOS_INTERVENCAO.length}</strong>
             <small>Modalidades de acompanhamento</small>
           </article>
           <article className="intervencao-card">
-            <div className="intervencao-card-topo"><span>Registros encontrados</span><span className="intervencao-icone">⌕</span></div>
+            <div className="intervencao-card-topo">
+              <span>Registros encontrados</span>
+              <span className="intervencao-icone">⌕</span>
+            </div>
             <strong>{listaFiltrada.length}</strong>
             <small>De acordo com a busca e os filtros</small>
           </article>
@@ -275,17 +328,36 @@ function Intervencao() {
 
         <section className="intervencao-lista-card">
           <div className="intervencao-lista-cabecalho">
-            <div><h2>Registros de intervenção</h2><p>Consulte as ações realizadas com cada aluno.</p></div>
-            <span className="intervencao-contador">{listaFiltrada.length} {listaFiltrada.length === 1 ? "registro" : "registros"}</span>
+            <div>
+              <h2>Registros de intervenção</h2>
+              <p>Consulte as ações realizadas com cada aluno.</p>
+            </div>
+            <span className="intervencao-contador">
+              {listaFiltrada.length} {listaFiltrada.length === 1 ? "registro" : "registros"}
+            </span>
           </div>
           <div className="intervencao-filtros">
             <label className="intervencao-busca">
               <span aria-hidden="true">⌕</span>
-              <input type="search" placeholder="Buscar pelo nome do aluno..." value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar pelo nome do aluno" />
+              <input
+                type="search"
+                placeholder="Buscar pelo nome do aluno..."
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                aria-label="Buscar pelo nome do aluno"
+              />
             </label>
-            <select value={tipoSelecionado} onChange={(e) => setTipoSelecionado(e.target.value)} aria-label="Filtrar por tipo de intervenção">
+            <select
+              value={tipoSelecionado}
+              onChange={(e) => setTipoSelecionado(e.target.value)}
+              aria-label="Filtrar por tipo de intervenção"
+            >
               <option value="Todos">Todos os tipos</option>
-              {TIPOS_INTERVENCAO.map((opcao) => <option key={opcao} value={opcao}>{opcao}</option>)}
+              {TIPOS_INTERVENCAO.map((opcao) => (
+                <option key={opcao} value={opcao}>
+                  {opcao}
+                </option>
+              ))}
             </select>
           </div>
           {listaFiltrada.length > 0 ? (
@@ -294,14 +366,28 @@ function Intervencao() {
                 const nome = nomeAluno(item.alunoId)
                 return (
                   <article className="intervencao-item" key={item.id}>
-                    <div className="intervencao-avatar" aria-hidden="true">{iniciais(nome)}</div>
+                    <div className="intervencao-avatar" aria-hidden="true">
+                      {iniciais(nome)}
+                    </div>
                     <div className="intervencao-item-info">
-                      <div className="intervencao-aluno-linha"><h3>{nome}</h3><span className="intervencao-turma">{turmaAluno(item.alunoId)}</span></div>
+                      <div className="intervencao-aluno-linha">
+                        <h3>{nome}</h3>
+                        <span className="intervencao-turma">{turmaAluno(item.alunoId)}</span>
+                      </div>
                       <span className={`intervencao-etiqueta ${classeTipo(item.tipo)}`}>{item.tipo}</span>
                       <p>{item.descricao}</p>
                     </div>
-                    <button type="button" className="intervencao-ver-detalhes" onClick={() => setDetalheSelecionado(item)}>Ver detalhes <span aria-hidden="true">→</span></button>
-                    <time className="intervencao-data" dateTime={item.data}><span aria-hidden="true">◷</span>{formatarData(item.data)}</time>
+                    <button
+                      type="button"
+                      className="intervencao-ver-detalhes"
+                      onClick={() => setDetalheSelecionado(item)}
+                    >
+                      Ver detalhes <span aria-hidden="true">→</span>
+                    </button>
+                    <time className="intervencao-data" dateTime={item.data}>
+                      <span aria-hidden="true">◷</span>
+                      {formatarData(item.data)}
+                    </time>
                   </article>
                 )
               })}
@@ -311,44 +397,129 @@ function Intervencao() {
               <span aria-hidden="true">⌕</span>
               <h3>Nenhuma intervenção encontrada</h3>
               <p>Tente mudar o nome pesquisado ou selecionar outro tipo de intervenção.</p>
-              <button type="button" onClick={() => { setBusca(""); setTipoSelecionado("Todos") }}>Limpar filtros</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setBusca("")
+                  setTipoSelecionado("Todos")
+                }}
+              >
+                Limpar filtros
+              </button>
             </div>
           )}
         </section>
 
         {detalheSelecionado && (
-          <div className="intervencao-modal-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetalheSelecionado(null) }}>
-            <section className="intervencao-modal" role="dialog" aria-modal="true" aria-labelledby="detalhe-intervencao-titulo">
+          <div
+            className="intervencao-modal-fundo"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setDetalheSelecionado(null)
+            }}
+          >
+            <section
+              className="intervencao-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="detalhe-intervencao-titulo"
+            >
               <div className="intervencao-modal-cabecalho">
-                <div><h2 id="detalhe-intervencao-titulo">Detalhes da intervenção</h2><p>Informações completas do registro selecionado.</p></div>
-                <button type="button" className="intervencao-modal-fechar" onClick={() => setDetalheSelecionado(null)} aria-label="Fechar detalhes">×</button>
+                <div>
+                  <h2 id="detalhe-intervencao-titulo">Detalhes da intervenção</h2>
+                  <p>Informações completas do registro selecionado.</p>
+                </div>
+                <button
+                  type="button"
+                  className="intervencao-modal-fechar"
+                  onClick={() => setDetalheSelecionado(null)}
+                  aria-label="Fechar detalhes"
+                >
+                  ×
+                </button>
               </div>
               <div className="intervencao-detalhes-conteudo">
-                <span className="intervencao-detalhes-label">Aluno</span><strong>{nomeAluno(detalheSelecionado.alunoId)}</strong>
-                <span className="intervencao-detalhes-label">Turma</span><strong>{turmaAluno(detalheSelecionado.alunoId)}</strong>
+                <span className="intervencao-detalhes-label">Aluno</span>
+                <strong>{nomeAluno(detalheSelecionado.alunoId)}</strong>
+                <span className="intervencao-detalhes-label">Turma</span>
+                <strong>{turmaAluno(detalheSelecionado.alunoId)}</strong>
                 <span className="intervencao-detalhes-label">Tipo de intervenção</span>
-                <div><span className={`intervencao-etiqueta ${classeTipo(detalheSelecionado.tipo)}`}>{detalheSelecionado.tipo}</span></div>
-                <span className="intervencao-detalhes-label">Data</span><strong>{formatarData(detalheSelecionado.data)}</strong>
-                <span className="intervencao-detalhes-label">Descrição</span><p>{detalheSelecionado.descricao}</p>
+                <div>
+                  <span className={`intervencao-etiqueta ${classeTipo(detalheSelecionado.tipo)}`}>
+                    {detalheSelecionado.tipo}
+                  </span>
+                </div>
+                <span className="intervencao-detalhes-label">Data</span>
+                <strong>{formatarData(detalheSelecionado.data)}</strong>
+                <span className="intervencao-detalhes-label">Descrição</span>
+                <p>{detalheSelecionado.descricao}</p>
+                {detalheSelecionado.atestadoUrl && (
+                  <>
+                    <span className="intervencao-detalhes-label">Anexo</span>
+                    <a
+                      href={detalheSelecionado.atestadoUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: "#633df2", fontWeight: 600, textDecoration: "none" }}
+                    >
+                      📄 Abrir documento do atestado ↗
+                    </a>
+                  </>
+                )}
               </div>
-              <div className="intervencao-formulario-acoes"><button type="button" className="intervencao-botao-principal" onClick={() => setDetalheSelecionado(null)}>Fechar detalhes</button></div>
+              <div className="intervencao-formulario-acoes">
+                <button
+                  type="button"
+                  className="intervencao-botao-principal"
+                  onClick={() => setDetalheSelecionado(null)}
+                >
+                  Fechar detalhes
+                </button>
+              </div>
             </section>
           </div>
         )}
 
         {modalAberto && (
-          <div className="intervencao-modal-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget) setModalAberto(false) }}>
-            <section className="intervencao-modal" role="dialog" aria-modal="true" aria-labelledby="intervencao-modal-titulo">
+          <div
+            className="intervencao-modal-fundo"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setModalAberto(false)
+            }}
+          >
+            <section
+              className="intervencao-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="intervencao-modal-titulo"
+            >
               <div className="intervencao-modal-cabecalho">
-                <div><h2 id="intervencao-modal-titulo">Nova intervenção</h2><p>Informe os dados da ação pedagógica realizada.</p></div>
-                <button type="button" className="intervencao-modal-fechar" onClick={() => setModalAberto(false)} aria-label="Fechar formulário">×</button>
+                <div>
+                  <h2 id="intervencao-modal-titulo">Nova intervenção</h2>
+                  <p>Informe os dados da ação pedagógica realizada.</p>
+                </div>
+                <button
+                  type="button"
+                  className="intervencao-modal-fechar"
+                  onClick={() => setModalAberto(false)}
+                  aria-label="Fechar formulário"
+                >
+                  ×
+                </button>
               </div>
               <form className="intervencao-formulario" onSubmit={salvarIntervencao}>
                 <div className="intervencao-seletor-aluno">
                   <label htmlFor="intervencao-turma-filtro">Turma</label>
-                  <select id="intervencao-turma-filtro" value={turmaBusca} onChange={(e) => alterarTurma(e.target.value)}>
+                  <select
+                    id="intervencao-turma-filtro"
+                    value={turmaBusca}
+                    onChange={(e) => alterarTurma(e.target.value)}
+                  >
                     <option value="">Todas as turmas</option>
-                    {turmas.map((turma) => <option key={turma} value={turma}>{turma}</option>)}
+                    {turmas.map((turma) => (
+                      <option key={turma} value={turma}>
+                        {turma}
+                      </option>
+                    ))}
                   </select>
                   <label htmlFor="intervencao-buscar-aluno">Aluno</label>
                   <div className="intervencao-combobox" ref={buscaRef}>
@@ -364,50 +535,107 @@ function Intervencao() {
                         aria-autocomplete="list"
                         aria-expanded={sugestoesAbertas}
                         aria-controls="intervencao-sugestoes-alunos"
-                        aria-activedescendant={sugestoesAbertas && sugestoes.length ? `intervencao-opcao-${sugestoes[opcaoAtiva]?.id}` : undefined}
+                        aria-activedescendant={
+                          sugestoesAbertas && sugestoes.length
+                            ? `intervencao-opcao-${sugestoes[opcaoAtiva]?.id}`
+                            : undefined
+                        }
                         onChange={(e) => alterarBuscaAluno(e.target.value)}
-                        onFocus={() => { if (!selecionado) setSugestoesAbertas(true) }}
-                        onBlur={(e) => { if (!buscaRef.current?.contains(e.relatedTarget)) setSugestoesAbertas(false) }}
+                        onFocus={() => {
+                          if (!selecionado) setSugestoesAbertas(true)
+                        }}
+                        onBlur={(e) => {
+                          if (!buscaRef.current?.contains(e.relatedTarget)) setSugestoesAbertas(false)
+                        }}
                         onKeyDown={navegarSugestoes}
                         required
                       />
                     </div>
                     {sugestoesAbertas && (
-                      <div id="intervencao-sugestoes-alunos" role="listbox" aria-label="Alunos encontrados" className="intervencao-sugestoes-alunos">
-                        {sugestoes.length ? sugestoes.map((aluno, index) => (
-                          <button
-                            id={`intervencao-opcao-${aluno.id}`}
-                            key={aluno.id}
-                            type="button"
-                            role="option"
-                            aria-selected={index === opcaoAtiva}
-                            className={index === opcaoAtiva ? "ativo" : ""}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => escolherAluno(aluno)}
-                          >
-                            <span>{aluno.nome}</span><small>{aluno.turma}</small>
-                          </button>
-                        )) : <p className="intervencao-sem-alunos">Nenhum aluno encontrado</p>}
+                      <div
+                        id="intervencao-sugestoes-alunos"
+                        role="listbox"
+                        aria-label="Alunos encontrados"
+                        className="intervencao-sugestoes-alunos"
+                      >
+                        {sugestoes.length ? (
+                          sugestoes.map((aluno, index) => (
+                            <button
+                              id={`intervencao-opcao-${aluno.id}`}
+                              key={aluno.id}
+                              type="button"
+                              role="option"
+                              aria-selected={index === opcaoAtiva}
+                              className={index === opcaoAtiva ? "ativo" : ""}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => escolherAluno(aluno)}
+                            >
+                              <span>{aluno.nome}</span>
+                              <small>{aluno.turma}</small>
+                            </button>
+                          ))
+                        ) : (
+                          <p className="intervencao-sem-alunos">Nenhum aluno encontrado</p>
+                        )}
                       </div>
                     )}
                   </div>
-                  {selecionado && <div className="intervencao-aluno-selecionado">Selecionado: <strong>{selecionado.nome}</strong> <span>· {selecionado.turma}</span><button type="button" onClick={() => { alterarBuscaAluno(""); buscaRef.current?.querySelector("input")?.focus() }} aria-label="Remover aluno selecionado">×</button></div>}
+                  {selecionado && (
+                    <div className="intervencao-aluno-selecionado">
+                      Selecionado: <strong>{selecionado.nome}</strong> <span>· {selecionado.turma}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          alterarBuscaAluno("")
+                          buscaRef.current?.querySelector("input")?.focus()
+                        }}
+                        aria-label="Remover aluno selecionado"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <label>Tipo de intervenção
+                <label>
+                  Tipo de intervenção
                   <select value={tipo} onChange={(e) => setTipo(e.target.value)} required>
-                    {TIPOS_INTERVENCAO.map((opcao) => <option key={opcao} value={opcao}>{opcao}</option>)}
+                    {TIPOS_INTERVENCAO.map((opcao) => (
+                      <option key={opcao} value={opcao}>
+                        {opcao}
+                      </option>
+                    ))}
                   </select>
                 </label>
-                <label>Data da intervenção
+                <label>
+                  Data da intervenção
                   <input type="date" value={data} onChange={(e) => setData(e.target.value)} required />
                 </label>
-                <label>Descrição da intervenção
-                  <textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Descreva a ação realizada e os principais pontos tratados..." rows={4} maxLength={1000} required />
+                <label>
+                  Descrição da intervenção
+                  <textarea
+                    value={descricao}
+                    onChange={(e) => setDescricao(e.target.value)}
+                    placeholder="Descreva a ação realizada e os principais pontos tratados..."
+                    rows={4}
+                    maxLength={1000}
+                    required
+                  />
                   <small>{descricao.length}/1000 caracteres</small>
                 </label>
-                {erro && <p className="intervencao-erro" role="alert">{erro}</p>}
+                {erro && (
+                  <p className="intervencao-erro" role="alert">
+                    {erro}
+                  </p>
+                )}
                 <div className="intervencao-formulario-acoes">
-                  <button type="button" className="intervencao-botao-secundario" onClick={() => setModalAberto(false)} disabled={loadingPost}>Cancelar</button>
+                  <button
+                    type="button"
+                    className="intervencao-botao-secundario"
+                    onClick={() => setModalAberto(false)}
+                    disabled={loadingPost}
+                  >
+                    Cancelar
+                  </button>
                   <button type="submit" className="intervencao-botao-principal" disabled={loadingPost}>
                     {loadingPost ? "Salvando..." : "Salvar intervenção"}
                   </button>

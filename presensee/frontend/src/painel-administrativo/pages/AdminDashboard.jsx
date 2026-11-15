@@ -46,7 +46,6 @@ function obterMesAtual() {
 
 function obterPerfil() {
     try {
-        // Agora busca o perfil real autenticado no sistema, e não o Demo
         return JSON.parse(localStorage.getItem("usuario")) || {};
     } catch {
         return {};
@@ -64,6 +63,42 @@ function agregarPorCampo(escolas, campo) {
     return [...contagem.entries()]
         .map(([nome, valor]) => ({ nome, valor }))
         .sort((a, b) => b.valor - a.valor || a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+function obterSerieEvolucaoEscolas(escolas, quantidade = 6) {
+    const referencia = new Date();
+    const inicioMesAtual = new Date(referencia.getFullYear(), referencia.getMonth(), 1);
+
+    const datasCadastro = escolas
+        .map((escola) => {
+            const bruto = escola.criadoEm || escola.createdAt || escola.dataCadastro;
+            if (!bruto) return null;
+            const d = new Date(bruto);
+            return Number.isNaN(d.getTime()) ? null : d;
+        })
+        .filter(Boolean);
+
+    const semDataCount = escolas.length - datasCadastro.length;
+
+    return Array.from({ length: quantidade }, (_, indice) => {
+        const mesRef = new Date(
+            inicioMesAtual.getFullYear(),
+            inicioMesAtual.getMonth() - (quantidade - 1 - indice),
+            1
+        );
+        const fimDoMes = new Date(mesRef.getFullYear(), mesRef.getMonth() + 1, 0, 23, 59, 59, 999);
+        const rotuloMes = mesRef.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+        const nomeFormatado = rotuloMes.charAt(0).toUpperCase() + rotuloMes.slice(1);
+
+        const acumuladasAteOMes =
+            datasCadastro.filter((d) => d <= fimDoMes).length +
+            (indice === quantidade - 1 ? semDataCount : 0);
+
+        return {
+            periodo: nomeFormatado,
+            n: acumuladasAteOMes
+        };
+    });
 }
 
 function obterSerieChamados(chamados, quantidade = 6) {
@@ -105,13 +140,14 @@ function Indicador({ rotulo, valor, tipo, icone, onClick }) {
     );
 }
 
-function CabecalhoPainel({ titulo, descricao }) {
+function CabecalhoPainel({ titulo, descricao, children }) {
     return (
         <div className="pd-painel-cabecalho">
             <div className="pd-painel-titulos">
                 <h2>{titulo}</h2>
                 <p>{descricao}</p>
             </div>
+            {children}
         </div>
     );
 }
@@ -138,18 +174,17 @@ function GraficoVazio({ texto }) {
 
 export default function AdminDashboard() {
     const navigate = useNavigate();
-    
-    // Estados para armazenar os dados reais da API
+
     const [escolas, setEscolas] = useState([]);
     const [chamados, setChamados] = useState([]);
     const [carregando, setCarregando] = useState(true);
-    
+    const [mesesExibidos, setMesesExibidos] = useState(6);
+
     const perfil = obterPerfil();
 
     useEffect(() => {
         async function buscarDadosDashboard() {
             try {
-                // Dispara as requisições em paralelo para maior rapidez
                 const [respostaEscolas, respostaChamados] = await Promise.all([
                     api.get("/escolas").catch(() => ({ data: [] })),
                     api.get("/chamados").catch(() => ({ data: [] }))
@@ -167,7 +202,6 @@ export default function AdminDashboard() {
         buscarDadosDashboard();
     }, []);
 
-    // Se a propriedade de status/estado no banco for diferente, ajuste "Ativa", "Pendente", "Bloqueada"
     const ativos = escolas.filter((escola) => escola.status === "Ativa" || escola.status === "ATIVA").length;
     const pendentes = escolas.filter((escola) => escola.status === "Pendente" || escola.status === "PENDENTE").length;
     const bloqueadas = escolas.filter((escola) => escola.status === "Bloqueada" || escola.status === "BLOQUEADA").length;
@@ -180,27 +214,26 @@ export default function AdminDashboard() {
         { nome: "Bloqueadas", valor: bloqueadas, cor: CORES_STATUS.bloqueadas }
     ];
     const distribuicaoGrafico = distribuicao.filter((item) => item.valor > 0);
-    
-    // Ajuste "municipio" e "rede" se os campos da sua API tiverem nomes diferentes (ex: "cidade")
+
     const municipios = agregarPorCampo(escolas, "municipio");
     const redes = agregarPorCampo(escolas, "rede");
-    
+
     const serieChamados = obterSerieChamados(chamados);
     const possuiChamados = serieChamados.some((item) => item.abertos > 0 || item.resolvidos > 0);
 
-    const chartData = [
-        { name: "Jan", n: 0 },
-        { name: "Fev", n: Math.floor(total / 4) },
-        { name: "Mar", n: Math.floor(total / 2) },
-        { name: "Abr", n: total }
-    ];
+    const chartData = obterSerieEvolucaoEscolas(escolas, mesesExibidos);
+    const tetoGrafico = Math.max(4, total + 1);
 
     function navegarParaEscolas(status) {
         navigate(`/admin/escolas?status=${encodeURIComponent(status)}`);
     }
 
     if (carregando) {
-        return <div className="admin-page pd-dashboard ad-dashboard" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>Carregando dados...</div>;
+        return (
+            <div className="admin-page pd-dashboard ad-dashboard" style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+                Carregando dados...
+            </div>
+        );
     }
 
     return (
@@ -234,9 +267,24 @@ export default function AdminDashboard() {
 
             <div className="pd-grade-principal ad-grade-principal">
                 <section className="pd-painel pd-evolucao">
-                    <CabecalhoPainel titulo="Evolução das escolas cadastradas" descricao="Acompanhe o crescimento da rede de escolas." />
-                    <div className="pd-grafico-evolucao ad-grafico-evolucao">
-                        <ResponsiveContainer width="100%" height="100%">
+                    <CabecalhoPainel
+                        titulo="Evolução das escolas cadastradas"
+                        descricao="Acompanhe o crescimento da rede de escolas ao longo do tempo."
+                    >
+                        <label className="pd-seletor-periodo">
+                            <span className="pd-acessivel">Período do gráfico de evolução</span>
+                            <select
+                                value={mesesExibidos}
+                                onChange={(evento) => setMesesExibidos(Number(evento.target.value))}
+                            >
+                                <option value={3}>Últimos 3 meses</option>
+                                <option value={6}>Últimos 6 meses</option>
+                                <option value={12}>Últimos 12 meses</option>
+                            </select>
+                        </label>
+                    </CabecalhoPainel>
+                    <div className="pd-grafico-evolucao ad-grafico-evolucao" style={{ minHeight: "240px" }}>
+                        <ResponsiveContainer width="100%" height={240}>
                             <AreaChart data={chartData} margin={{ top: 12, right: 12, left: -20, bottom: 0 }}>
                                 <defs>
                                     <linearGradient id="adEvolucaoEscolas" x1="0" x2="0" y1="0" y2="1">
@@ -245,14 +293,24 @@ export default function AdminDashboard() {
                                     </linearGradient>
                                 </defs>
                                 <CartesianGrid stroke="#e9e8f2" vertical={false} />
-                                <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                                <YAxis allowDecimals={false} domain={[0, "auto"]} axisLine={false} tickLine={false} />
+                                <XAxis dataKey="periodo" axisLine={false} tickLine={false} />
+                                <YAxis allowDecimals={false} domain={[0, tetoGrafico]} axisLine={false} tickLine={false} />
                                 <Tooltip content={<TooltipGrafico />} />
-                                <Area type="monotone" dataKey="n" name="Escolas" stroke="#633df2" strokeWidth={2.5} fill="url(#adEvolucaoEscolas)" dot={{ r: 4, fill: "#633df2", strokeWidth: 0 }} activeDot={{ r: 6 }} isAnimationActive animationDuration={900} />
+                                <Area
+                                    type="monotone"
+                                    dataKey="n"
+                                    name="Escolas"
+                                    stroke="#633df2"
+                                    strokeWidth={2.5}
+                                    fill="url(#adEvolucaoEscolas)"
+                                    dot={{ r: 4, fill: "#633df2", strokeWidth: 0 }}
+                                    activeDot={{ r: 6 }}
+                                    isAnimationActive
+                                    animationDuration={900}
+                                />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
-                    <p className="ad-grafico-observacao">Evolução ilustrativa para o protótipo, com projeção baseada no total atual ({total}).</p>
                 </section>
 
                 <section className="pd-painel pd-frequencia">
