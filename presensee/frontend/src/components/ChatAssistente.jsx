@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import GraficoRenderer from "./GraficoRenderer";
-import mascoteImg from "../assets/mascote.png";
+import mascoteImg from "../assets/mascote-chat.png";
 import "../styles/ChatAssistente.css";
 import { useNavigate } from "react-router-dom";
 import { useGraficos } from "../context/GraficosContext";
@@ -92,13 +92,25 @@ function adicionarNoDashboard(mensagem) {
   const { titulo, subtitulo, tipo, dados, eixoX, eixoY } = mensagem.grafico;
   adicionarGrafico({ titulo, subtitulo, tipo, dados, eixoX, eixoY });
 
-  // marca a mensagem como "já adicionada" para trocar o botão
   setMensagens((prev) =>
     prev.map((m) => (m.id === mensagem.id ? { ...m, adicionado: true } : m))
   );
 }
 
+function adicionarNoDashboard(mensagem) {
+  const { titulo, subtitulo, tipo, dados, eixoX, eixoY } = mensagem.grafico;
+  adicionarGrafico({ titulo, subtitulo, tipo, dados, eixoX, eixoY });
 
+  
+  setMensagens((prev) =>
+    prev.map((m) => (m.id === mensagem.id ? { ...m, adicionado: true } : m))
+  );
+}
+
+function verPersonalizado() {
+  setAberto(false);
+  navigate("/personalizado");
+}
 
 
   function enviar(e) {
@@ -138,7 +150,18 @@ function adicionarNoDashboard(mensagem) {
                       <strong>{m.grafico.titulo}</strong>
                       <span>{m.grafico.subtitulo}</span>
                       <GraficoRenderer grafico={m.grafico} altura={160} />
-                      {/* Passo 5: botão "Adicionar no Dashboard" entra aqui */}
+                      {m.adicionado ? (
+           <div className="chat-adicionado">
+             <span>✓ Adicionado</span>
+              <button type="button" onClick={verPersonalizado}>
+                  Ver em Personalizado
+                     </button>
+                        </div>
+) : (
+  <button type="button" className="chat-add" onClick={() => adicionarNoDashboard(m)}>
+    Adicionar no Dashboard
+  </button>
+)}
                     </div>
                   )}
                 </div>
