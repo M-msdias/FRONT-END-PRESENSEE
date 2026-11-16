@@ -7,12 +7,31 @@ const ETIQUETAS = {
   alto: "Alto risco",
   medio: "Atenção",
   baixo: "Informativo",
-  comunicado: "Comunicado Admin"
+  comunicado: "Comunicado Admin",
 };
+
+function obterChaveStorageUsuario() {
+  try {
+    const usuario = JSON.parse(localStorage.getItem("usuario") || "{}");
+    return usuario?.id ? `alertas_lidos_${usuario.id}` : "alertas_lidos";
+  } catch {
+    return "alertas_lidos";
+  }
+}
 
 function IconeSino() {
   return (
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
       <path d="M10 21h4" />
     </svg>
@@ -28,25 +47,32 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
   const [aberto, setAberto] = useState(false);
   const [comunicadoSelecionado, setComunicadoSelecionado] = useState(null);
 
+  const storageKey = obterChaveStorageUsuario();
+
   const [lidos, setLidos] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("alertas_lidos")) || [];
+      return JSON.parse(localStorage.getItem(storageKey)) || [];
     } catch {
       return [];
     }
   });
 
   useEffect(() => {
-    localStorage.setItem("alertas_lidos", JSON.stringify(lidos));
-  }, [lidos]);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(lidos));
+    } catch {
+      // Ignora erro de cota de storage
+    }
+  }, [lidos, storageKey]);
 
   useEffect(() => {
     async function buscarNotificacoes() {
-      const [resAlertas, resComunicados] = await Promise.allSettled([
+      const [resAlertas, resComunicados, resLidas] = await Promise.allSettled([
         notificacoesProp && notificacoesProp.length > 0
           ? Promise.resolve({ data: notificacoesProp })
           : api.get("/alerts"),
-        api.get("/comunicados")
+        api.get("/comunicados"),
+        api.get("/notificacoes-lidas"),
       ]);
 
       if (resAlertas.status === "fulfilled" && resAlertas.value?.data) {
@@ -58,12 +84,26 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
         const listaCom = Array.isArray(resComunicados.value.data) ? resComunicados.value.data : [];
         setComunicadosApi(listaCom);
       }
+
+      if (resLidas.status === "fulfilled" && Array.isArray(resLidas.value?.data)) {
+        const lidasServidor = resLidas.value.data;
+        setLidos((anteriores) => {
+          const unificadas = [...new Set([...lidasServidor, ...anteriores])];
+          // Se havia chaves locais ainda não enviadas ao servidor, sincroniza
+          const faltandoNoServidor = anteriores.filter((c) => !lidasServidor.includes(c));
+          if (faltandoNoServidor.length > 0) {
+            api.post("/notificacoes-lidas", { chaves: faltandoNoServidor }).catch(() => {});
+          }
+          return unificadas;
+        });
+      }
     }
 
     buscarNotificacoes();
   }, [notificacoesProp]);
 
-  const fonteAlertas = notificacoesProp && notificacoesProp.length > 0 ? notificacoesProp : alertasApi;
+  const fonteAlertas =
+    notificacoesProp && notificacoesProp.length > 0 ? notificacoesProp : alertasApi;
 
   const itensAlertas = (Array.isArray(fonteAlertas) ? fonteAlertas : []).map((alerta) => {
     const idBase = `alerta-${alerta.id || alerta._id || Math.random().toString(36).slice(2, 11)}`;
@@ -73,19 +113,30 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
       id: idBase,
       chaveLeitura: idBase,
       alunoId: alerta.studentId || String(alerta.matricula ?? alerta.alunoId ?? "").trim() || null,
-      subtitulo: alerta.student?.name || alerta.estudante || alerta.alunoNome || alerta.aluno?.nome || "Estudante",
+      subtitulo:
+        alerta.student?.name ||
+        alerta.estudante ||
+        alerta.alunoNome ||
+        alerta.aluno?.nome ||
+        "Estudante",
       titulo: alerta.title || alerta.titulo || "Novo Alerta",
       descricao: alerta.message || alerta.descricao || alerta.mensagem || "",
       nivel: alerta.level || alerta.nivel || alerta.risco || "baixo",
       dataOrdenacao: alerta.createdAt ? new Date(alerta.createdAt).getTime() : 0,
-      quando: alerta.quando || (alerta.createdAt ? new Date(alerta.createdAt).toLocaleDateString("pt-BR") : "Recente"),
+      quando:
+        alerta.quando ||
+        (alerta.createdAt ? new Date(alerta.createdAt).toLocaleDateString("pt-BR") : "Recente"),
     };
   });
 
   const itensComunicados = (Array.isArray(comunicadosApi) ? comunicadosApi : []).map((com) => {
     const tipoLower = String(com.tipo || "").toLowerCase();
     let nivel = "comunicado";
-    if (tipoLower.includes("urgente") || tipoLower.includes("crítico") || tipoLower.includes("manutenção")) {
+    if (
+      tipoLower.includes("urgente") ||
+      tipoLower.includes("crítico") ||
+      tipoLower.includes("manutenção")
+    ) {
       nivel = "medio";
     }
 
@@ -112,7 +163,6 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
     };
   });
 
-  // Combina comunicados do Admin + alertas da escola ordenados pelos mais recentes
   const alertas = [...itensComunicados, ...itensAlertas].sort(
     (a, b) => b.dataOrdenacao - a.dataOrdenacao
   );
@@ -141,8 +191,18 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
     };
   }, [aberto]);
 
+  function persistirLeituraNoServidor(chaves) {
+    if (!chaves || chaves.length === 0) return;
+    api.post("/notificacoes-lidas", { chaves }).catch((err) => {
+      console.error("Erro ao persistir leitura da notificação:", err);
+    });
+  }
+
   function visualizar(item) {
-    setLidos((anteriores) => [...new Set([...anteriores, item.chaveLeitura])]);
+    if (!lidos.includes(item.chaveLeitura)) {
+      setLidos((anteriores) => [...new Set([...anteriores, item.chaveLeitura])]);
+      persistirLeituraNoServidor([item.chaveLeitura]);
+    }
 
     if (item.origem === "COMUNICADO") {
       setComunicadoSelecionado(item);
@@ -160,7 +220,11 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
 
   function marcarTodasComoLidas() {
     const todasChaves = alertas.map((a) => a.chaveLeitura);
-    setLidos((anteriores) => [...new Set([...anteriores, ...todasChaves])]);
+    const novasChaves = todasChaves.filter((c) => !lidos.includes(c));
+    if (novasChaves.length === 0) return;
+
+    setLidos((anteriores) => [...new Set([...anteriores, ...novasChaves])]);
+    persistirLeituraNoServidor(novasChaves);
   }
 
   return (
@@ -177,7 +241,11 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
         aria-expanded={aberto}
       >
         <IconeSino />
-        {naoLidos > 0 && <span className="pnot-count" aria-label={`${naoLidos} não lidas`}>{naoLidos}</span>}
+        {naoLidos > 0 && (
+          <span className="pnot-count" aria-label={`${naoLidos} não lidas`}>
+            {naoLidos}
+          </span>
+        )}
       </button>
 
       {aberto && (
@@ -189,8 +257,8 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
                 {comunicadoSelecionado
                   ? comunicadoSelecionado.quando
                   : naoLidos
-                    ? `${naoLidos} item${naoLidos === 1 ? "" : "s"} não lido${naoLidos === 1 ? "" : "s"}`
-                    : "Tudo em dia"}
+                  ? `${naoLidos} item${naoLidos === 1 ? "" : "s"} não lido${naoLidos === 1 ? "" : "s"}`
+                  : "Tudo em dia"}
               </p>
             </div>
             <button
@@ -211,10 +279,15 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
 
           {comunicadoSelecionado ? (
             <div className="pnot-list" style={{ padding: "16px" }}>
-              <span className="pnot-level-name" style={{ display: "inline-block", marginBottom: "8px" }}>
+              <span
+                className="pnot-level-name"
+                style={{ display: "inline-block", marginBottom: "8px" }}
+              >
                 {comunicadoSelecionado.subtitulo}
               </span>
-              <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>{comunicadoSelecionado.titulo}</h3>
+              <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>
+                {comunicadoSelecionado.titulo}
+              </h3>
               <p style={{ margin: 0, fontSize: "14px", lineHeight: "1.6", whiteSpace: "pre-line" }}>
                 {comunicadoSelecionado.descricao}
               </p>
@@ -228,7 +301,7 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
                   border: "1px solid #cbd5e1",
                   background: "transparent",
                   cursor: "pointer",
-                  fontWeight: 600
+                  fontWeight: 600,
                 }}
               >
                 ← Voltar para notificações
@@ -237,49 +310,76 @@ export default function NotificacoesHome({ notificacoes: notificacoesProp }) {
           ) : (
             <>
               <div className="pnot-list">
-                {alertas.length ? alertas.map((alerta) => {
-                  const lido = lidos.includes(alerta.chaveLeitura);
-                  return (
-                    <button type="button" key={alerta.chaveLeitura} className={`pnot-item ${lido ? "pnot-item--read" : ""}`} onClick={() => visualizar(alerta)}>
-                      <span className={`pnot-level pnot-level--${alerta.nivel || "baixo"}`} aria-hidden="true" />
-                      <span className="pnot-content">
-                        <span className="pnot-item-top">
-                          <strong>{alerta.titulo}</strong>
-                          <small>{alerta.quando || ""}</small>
-                        </span>
-                        <span className="pnot-student">{alerta.subtitulo}</span>
-                        <span className="pnot-description">{alerta.descricao}</span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-                          <span className="pnot-level-name">{ETIQUETAS[alerta.nivel] || "Informativo"}</span>
-                          {alerta.foiEditado && (
-                            <span
-                              style={{
-                                fontSize: "11px",
-                                fontWeight: 700,
-                                padding: "2px 8px",
-                                borderRadius: "999px",
-                                backgroundColor: "#ede9fe",
-                                color: "#5b21b6",
-                              }}
-                            >
-                              Atualizado
+                {alertas.length ? (
+                  alertas.map((alerta) => {
+                    const lido = lidos.includes(alerta.chaveLeitura);
+                    return (
+                      <button
+                        type="button"
+                        key={alerta.chaveLeitura}
+                        className={`pnot-item ${lido ? "pnot-item--read" : ""}`}
+                        onClick={() => visualizar(alerta)}
+                      >
+                        <span
+                          className={`pnot-level pnot-level--${alerta.nivel || "baixo"}`}
+                          aria-hidden="true"
+                        />
+                        <span className="pnot-content">
+                          <span className="pnot-item-top">
+                            <strong>{alerta.titulo}</strong>
+                            <small>{alerta.quando || ""}</small>
+                          </span>
+                          <span className="pnot-student">{alerta.subtitulo}</span>
+                          <span className="pnot-description">{alerta.descricao}</span>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "6px",
+                              flexWrap: "wrap",
+                            }}
+                          >
+                            <span className="pnot-level-name">
+                              {ETIQUETAS[alerta.nivel] || "Informativo"}
                             </span>
-                          )}
+                            {alerta.foiEditado && (
+                              <span
+                                style={{
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                  padding: "2px 8px",
+                                  borderRadius: "999px",
+                                  backgroundColor: "#ede9fe",
+                                  color: "#5b21b6",
+                                }}
+                              >
+                                Atualizado
+                              </span>
+                            )}
+                          </span>
                         </span>
-                      </span>
-                      {!lido && <span className="pnot-unread" aria-label="Não lida" />}
-                    </button>
-                  );
-                }) : (
+                        {!lido && <span className="pnot-unread" aria-label="Não lida" />}
+                      </button>
+                    );
+                  })
+                ) : (
                   <div className="pnot-empty">
                     <strong>Nenhuma notificação</strong>
-                    <p>Os comunicados da administração e alertas dos estudantes aparecerão aqui.</p>
+                    <p>
+                      Os comunicados da administração e alertas dos estudantes aparecerão aqui.
+                    </p>
                   </div>
                 )}
               </div>
               {alertas.length > 0 && (
                 <div className="pnot-footer">
-                  <button type="button" onClick={marcarTodasComoLidas} disabled={naoLidos === 0}>Marcar todas como lidas</button>
+                  <button
+                    type="button"
+                    onClick={marcarTodasComoLidas}
+                    disabled={naoLidos === 0}
+                  >
+                    Marcar todas como lidas
+                  </button>
                 </div>
               )}
             </>
