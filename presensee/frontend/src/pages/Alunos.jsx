@@ -29,6 +29,17 @@ function formatarTurmaCompleta(classObj, fallbackNome) {
   return { nome, detalhe, rotuloCompleto: detalhe ? `${nome} (${detalhe})` : nome };
 }
 
+// Faltas justificadas (EXCUSED) são abonadas e contam como presença no cálculo
+function calcularPercentualFrequencia(attendances, fallback = 100) {
+  if (!Array.isArray(attendances) || attendances.length === 0) {
+    return fallback;
+  }
+  const abonadasOuPresentes = attendances.filter(
+    (a) => a.status === "PRESENT" || a.status === "EXCUSED"
+  ).length;
+  return Math.round((abonadasOuPresentes / attendances.length) * 100);
+}
+
 export default function Alunos() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -74,7 +85,8 @@ export default function Alunos() {
       setTurmasLista(Array.isArray(resTurmas.data) ? resTurmas.data : []);
 
       const alunosFormatados = resAlunos.data.map((aluno) => {
-        const frequencia = aluno.attendanceRate ?? aluno.frequencia ?? 100;
+        const frequencia =
+          aluno.frequency ?? aluno.attendanceRate ?? aluno.frequencia ?? 100;
         const turmaInfo = formatarTurmaCompleta(aluno.class, aluno.turma);
         return {
           ...aluno,
@@ -208,9 +220,15 @@ export default function Alunos() {
           const d = new Date(a.date);
           return !(d.getMonth() + 1 === mesNumero && d.getFullYear() === anoAtual);
         });
+        const todasChamadas = [...outrosMeses, ...registrosMes];
+        const novaFreq = calcularPercentualFrequencia(todasChamadas, prev.frequencia);
+        const novoRisco = novaFreq < 75 ? "Alto" : novaFreq < 90 ? "Médio" : "Baixo";
+
         return {
           ...prev,
-          attendances: [...outrosMeses, ...registrosMes],
+          frequencia: novaFreq,
+          risco: novoRisco,
+          attendances: todasChamadas,
         };
       });
     } catch (err) {
@@ -226,18 +244,18 @@ export default function Alunos() {
     try {
       const res = await api.get(`/students/${aluno.id}`);
       const incidentesLimpos = (res.data.incidents || []).filter(
-        (inc) => inc.type !== "FICHA_CADASTRO"
+        (inc) => inc.type !== "FICHA_CADASTRO" && inc.type !== "CONFIG_HORARIO_AULA"
       );
       const attendancesReais = res.data.attendances || [];
-      const totalAulas = attendancesReais.length;
-      const presencas = attendancesReais.filter((a) => a.status === "PRESENT").length;
-      const freqCalculada =
-        totalAulas > 0 ? Math.round((presencas / totalAulas) * 100) : aluno.frequencia;
+      const freqCalculada = calcularPercentualFrequencia(attendancesReais, aluno.frequencia);
+      const riscoCalculado =
+        freqCalculada < 75 ? "Alto" : freqCalculada < 90 ? "Médio" : "Baixo";
 
       setAlunoSelecionado((prev) => ({
         ...prev,
         ...res.data,
         frequencia: freqCalculada,
+        risco: riscoCalculado,
         foto:
           res.data.biometricDataUrl ||
           res.data.biometryUrl ||

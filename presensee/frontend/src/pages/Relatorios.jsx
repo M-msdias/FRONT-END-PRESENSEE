@@ -517,7 +517,7 @@ export default function Relatorios() {
     return (
       <DashboardLayout>
         <main className="relatorios-page">
-          <p style={{ padding: "2rem" }}>Gerando dados do relatório a partir da API...</p>
+          <p style={{ padding: "2rem" }}>Gerando dados do relatório a partir da API....</p>
         </main>
       </DashboardLayout>
     );
