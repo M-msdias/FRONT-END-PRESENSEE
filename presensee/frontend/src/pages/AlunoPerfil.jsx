@@ -47,6 +47,7 @@ function valorOuNaoInformado(v) {
   return v !== undefined && v !== null && String(v).trim() ? v : "Não informado";
 }
 
+// Evita o bug de fuso horário (new Date("2010-05-12") pode mostrar o dia anterior no Brasil)
 function formatarNascimento(valor) {
   if (!valor) return "";
   const m = String(valor).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -249,6 +250,78 @@ function AlunoPerfil() {
           : dadosAluno.attendanceRate ?? dadosAluno.frequencia ?? 100;
 
       const riscoCalculado = calcularPercentualRisco(dadosAluno.riskLevel, frequenciaCalculada);
+        const fichaCadastro = extrairDadosFichaCadastro(incidentes);
+
+        let listaResponsaveis = [];
+        if (Array.isArray(dadosAluno.guardians) && dadosAluno.guardians.length > 0) {
+          listaResponsaveis = dadosAluno.guardians;
+        } else if (Array.isArray(dadosAluno.responsaveis) && dadosAluno.responsaveis.length > 0) {
+          listaResponsaveis = dadosAluno.responsaveis;
+        } else if (
+          dadosAluno.guardianName ||
+          dadosAluno.responsavelNome ||
+          dadosAluno.guardianPhone ||
+          dadosAluno.responsavelTelefone
+        ) {
+          listaResponsaveis = [
+            {
+              nome: dadosAluno.guardianName || dadosAluno.responsavelNome || "Não informado",
+              telefone: dadosAluno.guardianPhone || dadosAluno.responsavelTelefone || "Telefone não informado",
+              parentesco: dadosAluno.guardianRelationship || fichaCadastro?.guardianRelationship || "",
+              email: dadosAluno.guardianEmail || fichaCadastro?.guardianEmail || "",
+            },
+          ];
+        } else if (fichaCadastro?.guardianName || fichaCadastro?.guardianPhone) {
+          listaResponsaveis = [
+            {
+              nome: fichaCadastro.guardianName || "Não informado",
+              telefone: fichaCadastro.guardianPhone || "Telefone não informado",
+              parentesco: fichaCadastro.guardianRelationship || "",
+              email: fichaCadastro.guardianEmail || "",
+            },
+          ];
+        }
+
+        // Endereço: aceita objeto aninhado (address/endereco) ou campos soltos
+        const brutoEndereco = dadosAluno.address || dadosAluno.endereco;
+        const end = brutoEndereco && typeof brutoEndereco === "object" ? brutoEndereco : {};
+
+        setAluno({
+          id: studentRealId,
+          nome: dadosAluno.name || dadosAluno.nome || "Aluno sem nome",
+          matricula: dadosAluno.registration || dadosAluno.matricula || "N/A",
+          turma: dadosAluno.class?.name || dadosAluno.turma?.name || dadosAluno.turma || "Turma não vinculada",
+          email: dadosAluno.email || "Não informado",
+          foto:
+            dadosAluno.biometricDataUrl ||
+            dadosAluno.biometryUrl ||
+            dadosAluno.photoUrl ||
+            dadosAluno.avatar ||
+            "",
+          frequencia: frequenciaCalculada,
+          risco: riscoCalculado,
+          status: dadosAluno.status || (frequenciaCalculada < 75 ? "Em acompanhamento" : "Regular"),
+          faltas: totalFaltas,
+          responsaveis: listaResponsaveis,
+          nascimento: dadosAluno.birthDate || dadosAluno.nascimento || fichaCadastro?.birthDate || "",
+          sexo: dadosAluno.gender || dadosAluno.sexo || fichaCadastro?.gender || "",
+          cpf: dadosAluno.cpf || fichaCadastro?.cpf || "",
+          telefone: dadosAluno.phone || dadosAluno.telefone || fichaCadastro?.phone || "",
+          turno: dadosAluno.class?.shift || dadosAluno.turma?.shift || "",
+          observacoes: dadosAluno.notes || dadosAluno.observacoes || fichaCadastro?.notes || "",
+          cep:
+            end.zipCode || end.cep || dadosAluno.zipCode || dadosAluno.cep || fichaCadastro?.cep || "",
+          rua:
+            end.street || end.rua || dadosAluno.street || dadosAluno.rua || fichaCadastro?.rua || "",
+          numero:
+            end.number || end.numero || dadosAluno.number || dadosAluno.numero || fichaCadastro?.numero || "",
+          bairro:
+            end.neighborhood || end.bairro || dadosAluno.neighborhood || dadosAluno.bairro || fichaCadastro?.bairro || "",
+          cidade:
+            end.city || end.cidade || dadosAluno.city || dadosAluno.cidade || fichaCadastro?.cidade || "",
+          estado:
+            end.state || end.estado || dadosAluno.state || dadosAluno.estado || fichaCadastro?.estado || "",
+        });
 
       let todosIncidentes = Array.isArray(dadosAluno.incidents) ? [...dadosAluno.incidents] : [];
       try {
@@ -803,6 +876,7 @@ function AlunoPerfil() {
             </p>
           </div>
 
+          {/* INFORMAÇÕES DO CADASTRO (dentro do primeiro retângulo) */}
           <div className="perfil-detalhes">
             <div className="perfil-detalhes-titulo">
               <span className="perfil-detalhes-icone">▤</span>
