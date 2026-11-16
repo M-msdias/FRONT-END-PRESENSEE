@@ -26,6 +26,12 @@ const textoSeguroCSV = (valor) => {
   return `"${seguro.replace(/"/g, '""')}"`;
 };
 
+const limparDescricaoIncidente = (texto) =>
+  String(texto || "")
+    .replace(/\[Prioridade:\s*(Alta|Média|Baixa)\]\s*/gi, "")
+    .replace(/\|\s*\[Atestado:\s*https?:\/\/[^\]]+\]/gi, "")
+    .trim();
+
 /* ---------- Helpers de data (sempre em horário local, formato AAAA-MM-DD) ---------- */
 const paraISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const deISO = (s) => { const [a, m, d] = s.split("-").map(Number); return new Date(a, m - 1, d); };
@@ -45,7 +51,7 @@ function Icone({ tipo, size = 20 }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[tipo]}</svg>;
 }
 
-/* ---------- Seletor de período (estilo Booking) ---------- */
+/* ---------- Seletor de período ---------- */
 function SeletorPeriodo({ inicio, fim, onChange }) {
   const [aberto, setAberto] = useState(false);
   const [mesBase, setMesBase] = useState(() => primeiroDiaDoMes(deISO(inicio)));
@@ -217,11 +223,11 @@ export default function Relatorios() {
   const [turmaFiltro, setTurmaFiltro] = useState("Todas as turmas");
 
   const [alunosData, setAlunosData] = useState([]);
+  const [chamadasData, setChamadasData] = useState([]);
   const [intervencoesData, setIntervencoesData] = useState([]);
   const [turmasData, setTurmasData] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Período: do dia 1 do mês atual até hoje (o usuário pode alterar no calendário)
   const [dataInicio, setDataInicio] = useState(() => {
     const h = new Date();
     return paraISO(new Date(h.getFullYear(), h.getMonth(), 1));
@@ -238,37 +244,80 @@ export default function Relatorios() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [resAlunos, resIncidentes, resTurmas] = await Promise.all([
+        const [resAlunos, resIncidentes, resTurmas, resChamadas] = await Promise.all([
           api.get("/students").catch(() => ({ data: [] })),
           api.get("/incidents").catch(() => ({ data: [] })),
-          api.get("/classes").catch(() => ({ data: [] }))
+          api.get("/classes").catch(() => ({ data: [] })),
+          api.get("/attendances").catch(() => ({ data: [] })),
         ]);
 
-        const alunosFormatados = (resAlunos.data || []).map(a => ({
-          ...a,
-          id: a.id || a._id,
-          nome: a.name || a.nome,
-          turma: a.class?.name || a.turma,
-          frequencia: a.attendanceRate ?? a.frequencia ?? 100,
-          faltas: a.absences ?? a.faltas ?? 0,
-        }));
+        const todasChamadas = Array.isArray(resChamadas.data) ? resChamadas.data : [];
+        const todosIncidentes = Array.isArray(resIncidentes.data) ? resIncidentes.data : [];
+        const todasTurmas = Array.isArray(resTurmas.data) ? resTurmas.data : [];
 
-        const intervencoesFormatadas = (resIncidentes.data || [])
-          .filter(i => i.studentId)
-          .map(i => ({
+        // Agrupa chamadas por aluno (ABSENT = falta, EXCUSED = justificada/abonada, PRESENT = presente)
+        const chamadasPorAluno = new Map();
+        todasChamadas.forEach((c) => {
+          const sid = String(c.studentId);
+          if (!chamadasPorAluno.has(sid)) chamadasPorAluno.set(sid, []);
+          chamadasPorAluno.get(sid).push(c);
+        });
+
+        // Agrupa pendências abertas por aluno a partir de /incidents
+        const pendenciasPorAluno = new Map();
+        todosIncidentes.forEach((inc) => {
+          if (!inc.studentId) return;
+          if (inc.type === "PENDENCIA" || inc.isPending === true) {
+            const sid = String(inc.studentId);
+            if (!pendenciasPorAluno.has(sid)) pendenciasPorAluno.set(sid, []);
+            pendenciasPorAluno.get(sid).push(limparDescricaoIncidente(inc.description));
+          }
+        });
+
+        const alunosFormatados = (resAlunos.data || []).map((a) => {
+          const sid = String(a.id || a._id);
+          const chamadasAluno = chamadasPorAluno.get(sid) || [];
+          const faltasNaoJustificadas = chamadasAluno.filter((c) => c.status === "ABSENT").length;
+
+          // Monta histórico unificado de faltas (ABSENT + EXCUSED) para a aba "Histórico de faltas"
+          const historicoFaltasReais = chamadasAluno
+            .filter((c) => c.status === "ABSENT" || c.status === "EXCUSED")
+            .map((c) => ({
+              data: paraISO(new Date(c.date)),
+              justificada: c.status === "EXCUSED",
+            }));
+
+          return {
+            ...a,
+            id: sid,
+            nome: a.name || a.nome,
+            turma: a.class?.name || a.turma || "Sem turma",
+            frequencia: a.frequency ?? a.attendanceRate ?? a.frequencia ?? 100,
+            faltas: chamadasAluno.length > 0 ? faltasNaoJustificadas : (a.absences ?? a.faltas ?? 0),
+            historicoFaltas: historicoFaltasReais,
+            pendencias: pendenciasPorAluno.get(sid) || [],
+          };
+        });
+
+        const intervencoesFormatadas = todosIncidentes
+          .filter(
+            (i) =>
+              i.studentId &&
+              !["FICHA_CADASTRO", "CONFIG_HORARIO_AULA", "PENDENCIA", "RESOLVIDO"].includes(i.type)
+          )
+          .map((i) => ({
             ...i,
             id: i.id || i._id,
-            alunoId: i.studentId || i.alunoId,
+            alunoId: String(i.studentId || i.alunoId),
             data: i.date || i.createdAt || i.data,
-            tipo: i.type || i.tipo,
-            descricao: i.description || i.descricao
+            tipo: i.type || i.tipo || "Intervenção",
+            descricao: limparDescricaoIncidente(i.description || i.descricao),
           }));
 
-        const turmasList = (resTurmas.data || []).map(t => t.name || t.nome || t).filter(Boolean);
-
         setAlunosData(alunosFormatados);
+        setChamadasData(todasChamadas);
         setIntervencoesData(intervencoesFormatadas);
-        setTurmasData([...new Set(turmasList)]);
+        setTurmasData(todasTurmas);
       } catch (error) {
         console.error("Erro ao carregar dados para os relatórios:", error);
       } finally {
@@ -279,50 +328,97 @@ export default function Relatorios() {
   }, []);
 
   const NOMES_TURMAS = useMemo(() => {
-    if (turmasData.length > 0) return turmasData;
-    const turmasExtraidas = alunosData.map(a => a.turma || a.class?.name).filter(Boolean);
-    return [...new Set(turmasExtraidas)].sort();
+    if (turmasData.length > 0) {
+      return [...new Set(turmasData.map((t) => t.name || t.nome || t).filter(Boolean))].sort((a, b) =>
+        String(a).localeCompare(String(b), "pt-BR", { numeric: true })
+      );
+    }
+    const turmasExtraidas = alunosData.map((a) => a.turma || a.class?.name).filter(Boolean);
+    return [...new Set(turmasExtraidas)].sort((a, b) =>
+      String(a).localeCompare(String(b), "pt-BR", { numeric: true })
+    );
   }, [turmasData, alunosData]);
 
-  const estudantes = useMemo(() => alunosData.filter((a) => {
-    const freq = a.frequencia || 0;
-    const turmaAluno = a.turma;
-    return Number.isFinite(Number(freq)) && (turmaFiltro === "Todas as turmas" || turmaAluno === turmaFiltro);
-  }), [alunosData, turmaFiltro]);
+  const estudantes = useMemo(
+    () =>
+      alunosData.filter((a) => {
+        const freq = a.frequencia ?? 100;
+        return (
+          Number.isFinite(Number(freq)) &&
+          (turmaFiltro === "Todas as turmas" || a.turma === turmaFiltro)
+        );
+      }),
+    [alunosData, turmaFiltro]
+  );
 
-  const faltasPeriodo = useMemo(() => estudantes.flatMap((a) => (a.historicoFaltas || [])
-    .filter((f) => noPeriodo(f.data))
-    .map((f) => ({ aluno: a, ...f }))), [estudantes, dataInicio, dataFim]);
+  const faltasPeriodo = useMemo(
+    () =>
+      estudantes.flatMap((a) =>
+        (a.historicoFaltas || [])
+          .filter((f) => noPeriodo(f.data))
+          .map((f) => ({ aluno: a, ...f }))
+      ),
+    [estudantes, dataInicio, dataFim]
+  );
 
-  const intervencoesPeriodo = useMemo(() => intervencoesData
-    .filter((i) => noPeriodo(i.data))
-    .filter((i) => estudantes.some((a) => String(a.id) === String(i.alunoId)))
-    .map((i) => ({ ...i, aluno: estudantes.find((a) => String(a.id) === String(i.alunoId)) })), [intervencoesData, estudantes, dataInicio, dataFim]);
+  const intervencoesPeriodo = useMemo(
+    () =>
+      intervencoesData
+        .filter((i) => noPeriodo(i.data))
+        .filter((i) => estudantes.some((a) => String(a.id) === String(i.alunoId)))
+        .map((i) => ({
+          ...i,
+          aluno: estudantes.find((a) => String(a.id) === String(i.alunoId)),
+        })),
+    [intervencoesData, estudantes, dataInicio, dataFim]
+  );
 
-  const turmas = useMemo(() => NOMES_TURMAS
-    .filter((t) => turmaFiltro === "Todas as turmas" || t === turmaFiltro)
-    .map((nome) => {
-      const lista = estudantes.filter((a) => a.turma === nome);
-      const faltas = faltasPeriodo.filter((f) => f.aluno.turma === nome);
-      const acoes = intervencoesPeriodo.filter((i) => i.aluno.turma === nome);
+  const turmas = useMemo(
+    () =>
+      NOMES_TURMAS.filter((t) => turmaFiltro === "Todas as turmas" || t === turmaFiltro).map(
+        (nome) => {
+          const lista = estudantes.filter((a) => a.turma === nome);
+          const faltas = faltasPeriodo.filter((f) => f.aluno.turma === nome);
+          const acoes = intervencoesPeriodo.filter((i) => i.aluno.turma === nome);
+          const turmaApi = turmasData.find((t) => (t.name || t.nome) === nome);
 
-      const freqMedia = media(lista.map((a) => a.frequencia));
+          // Usa a taxa ponderada real da turma (PRESENT + EXCUSED) se houver chamadas, ou média dos alunos
+          const freqMedia =
+            lista.length === 0
+              ? 0
+              : turmaApi?.attendanceRate !== undefined
+              ? turmaApi.attendanceRate
+              : media(lista.map((a) => a.frequencia));
 
-      return {
-        turma: nome,
-        alunos: lista.length,
-        frequencia: freqMedia,
-        baixo: lista.filter((a) => risco(a.frequencia) === "Baixo").length,
-        medio: lista.filter((a) => risco(a.frequencia) === "Médio").length,
-        alto: lista.filter((a) => risco(a.frequencia) === "Alto").length,
-        faltas: faltas.length,
-        justificadas: faltas.filter((f) => f.justificada).length,
-        intervencoes: acoes.length,
-        comPendencias: lista.filter((a) => (a.pendencias || []).length > 0).length
-      };
-    }), [NOMES_TURMAS, estudantes, faltasPeriodo, intervencoesPeriodo, turmaFiltro]);
+          return {
+            turma: nome,
+            alunos: lista.length,
+            frequencia: freqMedia,
+            baixo: lista.filter((a) => risco(a.frequencia) === "Baixo").length,
+            medio: lista.filter((a) => risco(a.frequencia) === "Médio").length,
+            alto: lista.filter((a) => risco(a.frequencia) === "Alto").length,
+            faltas: faltas.filter((f) => !f.justificada).length,
+            justificadas: faltas.filter((f) => f.justificada).length,
+            intervencoes: acoes.length,
+            comPendencias: lista.filter((a) => (a.pendencias || []).length > 0).length,
+          };
+        }
+      ),
+    [NOMES_TURMAS, estudantes, faltasPeriodo, intervencoesPeriodo, turmaFiltro, turmasData]
+  );
 
-  const freqGeral = media(estudantes.map((a) => a.frequencia));
+  const freqGeral = useMemo(() => {
+    if (estudantes.length === 0) return 0;
+    const idsEstudantes = new Set(estudantes.map((e) => String(e.id)));
+    const chamadasFiltradas = chamadasData.filter((c) => idsEstudantes.has(String(c.studentId)));
+    if (chamadasFiltradas.length > 0) {
+      const presentesOuAbonados = chamadasFiltradas.filter(
+        (c) => c.status === "PRESENT" || c.status === "EXCUSED"
+      ).length;
+      return Math.round((presentesOuAbonados / chamadasFiltradas.length) * 100);
+    }
+    return media(estudantes.map((a) => a.frequencia));
+  }, [estudantes, chamadasData]);
 
   const resumo = [
     { titulo: "Frequência Geral", valor: `${freqGeral}%`, icone: "%", classe: "frequencia" },
@@ -333,7 +429,7 @@ export default function Relatorios() {
   const colunas = {
     frequencia: ["Turma", "Alunos", "Frequência"],
     risco: ["Turma", "Médio risco", "Alto risco"],
-    faltas: ["Turma", "Faltas no período", "Justificadas"],
+    faltas: ["Turma", "Faltas não justificadas", "Justificadas / Abonadas"],
     cadastro: ["Turma", "Alunos", "Frequência"],
     acompanhamento: ["Turma", "Com pendências", "Em risco"],
     intervencoes: ["Turma", "Intervenções no período", "Alunos"],
@@ -369,11 +465,24 @@ export default function Relatorios() {
         a.status || "Ativo",
         a.email || "",
         a.telefone || "",
-        (a.guardians || a.responsaveis || []).map((r) => `${r.nome || r.name} (${r.parentesco}): ${r.telefone || ""}`).join(" | ")
+        (a.guardians || a.responsaveis || [])
+          .map((r) => `${r.nome || r.name} (${r.parentesco || "Resp."}): ${r.telefone || ""}`)
+          .join(" | "),
       ];
     };
 
-    const cabAluno = ["Matrícula", "Nome completo", "Turma", "Frequência atual", "Risco atual", "Total de faltas", "Situação", "E-mail", "Contato", "Responsáveis e telefones"];
+    const cabAluno = [
+      "Matrícula",
+      "Nome completo",
+      "Turma",
+      "Frequência atual",
+      "Risco atual",
+      "Faltas não justificadas",
+      "Situação",
+      "E-mail",
+      "Contato",
+      "Responsáveis e telefones",
+    ];
 
     const alunosOrdenados = [...estudantes].sort((a, b) => {
       const turmaA = a.turma || "";
@@ -386,42 +495,51 @@ export default function Relatorios() {
     adicionar("Dados individuais dos alunos (situação atual)", cabAluno, alunosOrdenados.map(linhaAluno));
 
     if (["frequencia", "risco", "acompanhamento", "cadastro"].includes(tipo)) {
-      adicionar("Acompanhamento individual", ["Matrícula", "Aluno", "Turma", "Risco atual", "Observações", "Resultado esperado", "Resultado obtido", "Pendências"],
+      adicionar(
+        "Acompanhamento individual",
+        ["Matrícula", "Aluno", "Turma", "Risco atual", "Observações", "Pendências abertas"],
         alunosOrdenados.map((a) => [
           a.registration || a.matricula || a.id,
           a.nome,
           a.turma,
           risco(a.frequencia),
           a.observacoes || "",
-          a.resultadoEsperado || "",
-          a.resultadoObtido || "",
-          (a.pendencias || []).join(" | ")
-        ]));
+          (a.pendencias || []).join(" | "),
+        ])
+      );
     }
 
     if (["faltas", "frequencia", "acompanhamento"].includes(tipo)) {
-      adicionar(`Faltas registradas de ${descricaoPeriodo}`, ["Data", "Matrícula", "Aluno", "Turma", "Justificada"],
-        [...faltasPeriodo].sort((a, b) => b.data.localeCompare(a.data)).map((f) =>
-          [
+      adicionar(
+        `Ausências e abonos registrados de ${descricaoPeriodo}`,
+        ["Data", "Matrícula", "Aluno", "Turma", "Status"],
+        [...faltasPeriodo]
+          .sort((a, b) => b.data.localeCompare(a.data))
+          .map((f) => [
             formatar(f.data),
             f.aluno.registration || f.aluno.matricula || f.aluno.id,
             f.aluno.nome,
             f.aluno.turma,
-            f.justificada ? "Sim" : "Não"
-          ]));
+            f.justificada ? "Justificada / Abonada" : "Falta",
+          ])
+      );
     }
 
     if (["intervencoes", "acompanhamento", "risco"].includes(tipo)) {
-      adicionar(`Intervenções registradas de ${descricaoPeriodo}`, ["Data", "Matrícula", "Aluno", "Turma", "Tipo", "Descrição"],
-        [...intervencoesPeriodo].sort((a, b) => b.data.localeCompare(a.data)).map((i) =>
-          [
+      adicionar(
+        `Intervenções registradas de ${descricaoPeriodo}`,
+        ["Data", "Matrícula", "Aluno", "Turma", "Tipo", "Descrição"],
+        [...intervencoesPeriodo]
+          .sort((a, b) => String(b.data).localeCompare(String(a.data)))
+          .map((i) => [
             formatar(String(i.data).slice(0, 10)),
             i.aluno.registration || i.aluno.matricula || i.aluno.id,
             i.aluno.nome,
             i.aluno.turma,
             i.tipo,
-            i.descricao || ""
-          ]));
+            i.descricao || "",
+          ])
+      );
     }
 
     return secoes;
@@ -430,10 +548,14 @@ export default function Relatorios() {
   function exportarExcel() {
     const secoes = montarRelatorio();
     const linhas = [
-      ["PresenSee — " + titulo], ["Turma", turmaFiltro], ["Período de registros", descricaoPeriodo],
+      ["PresenSee — " + titulo],
+      ["Turma", turmaFiltro],
+      ["Período de registros", descricaoPeriodo],
       ["Indicadores de frequência e risco", "Situação atual extraída da API"],
-      ["Gerado em", new Date().toLocaleString("pt-BR")], [],
-      ...resumo.map((r) => [r.titulo, r.valor]), [],
+      ["Gerado em", new Date().toLocaleString("pt-BR")],
+      [],
+      ...resumo.map((r) => [r.titulo, r.valor]),
+      [],
     ];
 
     secoes.forEach((s) => {
@@ -470,7 +592,7 @@ export default function Relatorios() {
     const resumoLinha = resumo.map((r) => `${limparPdf(r.titulo)}: ${r.valor}`).join("      |      ");
     doc.text(resumoLinha, margem, y); y += 7;
     doc.setFontSize(8); doc.setTextColor(95, 100, 120);
-    doc.text("Frequencia e risco: situacao atual no banco de dados.", margem, y); y += 11;
+    doc.text("Frequencia e risco: situacao atual no banco de dados (faltas abonadas contam como presenca).", margem, y); y += 11;
 
     const larguraColunas = (quantidade) => (largura - margem * 2) / quantidade;
 
@@ -517,7 +639,7 @@ export default function Relatorios() {
     return (
       <DashboardLayout>
         <main className="relatorios-page">
-          <p style={{ padding: "2rem" }}>Gerando dados do relatório a partir da API....</p>
+          <p style={{ padding: "2rem" }}>Gerando dados do relatório a partir da API...</p>
         </main>
       </DashboardLayout>
     );
@@ -585,4 +707,3 @@ export default function Relatorios() {
     </DashboardLayout>
   );
 }
-
