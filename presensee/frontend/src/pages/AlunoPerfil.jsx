@@ -43,6 +43,28 @@ function formatarDataDisplay(iso) {
   return d.toLocaleDateString("pt-BR");
 }
 
+function valorOuNaoInformado(v) {
+  return v !== undefined && v !== null && String(v).trim() ? v : "Não informado";
+}
+
+// Evita o bug de fuso horário (new Date("2010-05-12") pode mostrar o dia anterior no Brasil)
+function formatarNascimento(valor) {
+  if (!valor) return "";
+  const m = String(valor).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
+  return formatarDataDisplay(valor);
+}
+
+function calcularIdade(valor) {
+  const m = String(valor || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const hoje = new Date();
+  let idade = hoje.getFullYear() - Number(m[1]);
+  const mes = hoje.getMonth() + 1 - Number(m[2]);
+  if (mes < 0 || (mes === 0 && hoje.getDate() < Number(m[3]))) idade--;
+  return idade >= 0 ? idade : null;
+}
+
 function limparTagsPendencia(texto) {
   if (!texto) return "";
   return texto
@@ -198,6 +220,8 @@ function AlunoPerfil() {
             {
               nome: dadosAluno.guardianName || dadosAluno.responsavelNome || "Não informado",
               telefone: dadosAluno.guardianPhone || dadosAluno.responsavelTelefone || "Telefone não informado",
+              parentesco: dadosAluno.guardianRelationship || fichaCadastro?.guardianRelationship || "",
+              email: dadosAluno.guardianEmail || fichaCadastro?.guardianEmail || "",
             },
           ];
         } else if (fichaCadastro?.guardianName || fichaCadastro?.guardianPhone) {
@@ -205,9 +229,15 @@ function AlunoPerfil() {
             {
               nome: fichaCadastro.guardianName || "Não informado",
               telefone: fichaCadastro.guardianPhone || "Telefone não informado",
+              parentesco: fichaCadastro.guardianRelationship || "",
+              email: fichaCadastro.guardianEmail || "",
             },
           ];
         }
+
+        // Endereço: aceita objeto aninhado (address/endereco) ou campos soltos
+        const brutoEndereco = dadosAluno.address || dadosAluno.endereco;
+        const end = brutoEndereco && typeof brutoEndereco === "object" ? brutoEndereco : {};
 
         setAluno({
           id: studentRealId,
@@ -226,6 +256,24 @@ function AlunoPerfil() {
           status: dadosAluno.status || (frequenciaCalculada < 75 ? "Em acompanhamento" : "Regular"),
           faltas: totalFaltas,
           responsaveis: listaResponsaveis,
+          nascimento: dadosAluno.birthDate || dadosAluno.nascimento || fichaCadastro?.birthDate || "",
+          sexo: dadosAluno.gender || dadosAluno.sexo || fichaCadastro?.gender || "",
+          cpf: dadosAluno.cpf || fichaCadastro?.cpf || "",
+          telefone: dadosAluno.phone || dadosAluno.telefone || fichaCadastro?.phone || "",
+          turno: dadosAluno.class?.shift || dadosAluno.turma?.shift || "",
+          observacoes: dadosAluno.notes || dadosAluno.observacoes || fichaCadastro?.notes || "",
+          cep:
+            end.zipCode || end.cep || dadosAluno.zipCode || dadosAluno.cep || fichaCadastro?.cep || "",
+          rua:
+            end.street || end.rua || dadosAluno.street || dadosAluno.rua || fichaCadastro?.rua || "",
+          numero:
+            end.number || end.numero || dadosAluno.number || dadosAluno.numero || fichaCadastro?.numero || "",
+          bairro:
+            end.neighborhood || end.bairro || dadosAluno.neighborhood || dadosAluno.bairro || fichaCadastro?.bairro || "",
+          cidade:
+            end.city || end.cidade || dadosAluno.city || dadosAluno.cidade || fichaCadastro?.cidade || "",
+          estado:
+            end.state || end.estado || dadosAluno.state || dadosAluno.estado || fichaCadastro?.estado || "",
         });
 
         // Exclui registros internos de FICHA_CADASTRO e pendências da linha do tempo de intervenções
@@ -308,6 +356,41 @@ function AlunoPerfil() {
 
   const ultimasIntervencoes = historicoExpandido ? historico : historico.slice(0, 3);
   const responsavelPrincipal = aluno.responsaveis?.[0];
+
+  const idadeAluno = calcularIdade(aluno.nascimento);
+  const nascimentoTexto = aluno.nascimento
+    ? `${formatarNascimento(aluno.nascimento)}${idadeAluno !== null ? ` · ${idadeAluno} anos` : ""}`
+    : "";
+
+  const dadosPessoais = [
+    ["Data de nascimento", nascimentoTexto],
+    ["Sexo", aluno.sexo],
+    ["CPF", aluno.cpf],
+    ["Matrícula", aluno.matricula !== "N/A" ? aluno.matricula : ""],
+    ["Turma", aluno.turma !== "Turma não vinculada" ? aluno.turma : ""],
+    ["Turno", aluno.turno],
+    ["E-mail", aluno.email !== "Não informado" ? aluno.email : ""],
+    ["Telefone", aluno.telefone],
+  ];
+
+  const limparPlaceholder = (v) =>
+    v === "Não informado" || v === "Telefone não informado" ? "" : v;
+
+  const dadosResponsavel = [
+    ["Nome", limparPlaceholder(responsavelPrincipal?.nome || responsavelPrincipal?.name)],
+    ["Parentesco", responsavelPrincipal?.parentesco],
+    ["Telefone", limparPlaceholder(responsavelPrincipal?.telefone || responsavelPrincipal?.phone)],
+    ["E-mail", responsavelPrincipal?.email],
+  ];
+
+  const dadosEndereco = [
+    ["CEP", aluno.cep],
+    ["Rua", aluno.rua],
+    ["Número", aluno.numero],
+    ["Bairro", aluno.bairro],
+    ["Cidade", aluno.cidade],
+    ["Estado", aluno.estado],
+  ];
 
   const pendenciasOrdenadas = [...pendencias].sort((a, b) => {
     if (a.feita !== b.feita) return a.feita ? 1 : -1;
@@ -466,21 +549,6 @@ function AlunoPerfil() {
             </div>
           </div>
 
-          <div className="perfil-contatos">
-            <div className="perfil-contato-item">
-              <span className="perfil-contato-icone">✉</span>
-              <span>{aluno.email}</span>
-            </div>
-            <div className="perfil-contato-item">
-              <span className="perfil-contato-icone">♙</span>
-              <span>Responsável: {responsavelPrincipal?.nome || responsavelPrincipal?.name || "Não informado"}</span>
-            </div>
-            <div className="perfil-contato-item">
-              <span className="perfil-contato-icone">☎</span>
-              <span>{responsavelPrincipal?.telefone || responsavelPrincipal?.phone || "Telefone não informado"}</span>
-            </div>
-          </div>
-
           <div className="perfil-risco">
             <span className="perfil-risco-label">Risco atual</span>
             <strong>{aluno.risco}%</strong>
@@ -497,6 +565,69 @@ function AlunoPerfil() {
                 ? "Frequência abaixo do esperado. É importante manter o acompanhamento."
                 : "Continue acompanhando a frequência e o desempenho do aluno."}
             </p>
+          </div>
+
+          {/* INFORMAÇÕES DO CADASTRO (dentro do primeiro retângulo) */}
+          <div className="perfil-detalhes">
+            <div className="perfil-detalhes-titulo">
+              <span className="perfil-detalhes-icone">▤</span>
+              <h2>Informações do cadastro</h2>
+            </div>
+
+            <div className="perfil-detalhes-grupos">
+              <div className="perfil-detalhes-grupo">
+                <h3>
+                  <span className="perfil-detalhes-grupo-icone">♙</span>
+                  Dados pessoais
+                </h3>
+                <dl className="perfil-dados-grid">
+                  {dadosPessoais.map(([rotulo, valor]) => (
+                    <div className="perfil-dados-item" key={rotulo}>
+                      <dt>{rotulo}</dt>
+                      <dd>{valorOuNaoInformado(valor)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              <div className="perfil-detalhes-grupo">
+                <h3>
+                  <span className="perfil-detalhes-grupo-icone">☎</span>
+                  Responsável
+                </h3>
+                <dl className="perfil-dados-grid perfil-dados-grid-unica">
+                  {dadosResponsavel.map(([rotulo, valor]) => (
+                    <div className="perfil-dados-item" key={rotulo}>
+                      <dt>{rotulo}</dt>
+                      <dd>{valorOuNaoInformado(valor)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+
+              <div className="perfil-detalhes-grupo">
+                <h3>
+                  <span className="perfil-detalhes-grupo-icone">⌂</span>
+                  Endereço
+                </h3>
+                <dl className="perfil-dados-grid">
+                  {dadosEndereco.map(([rotulo, valor]) => (
+                    <div className="perfil-dados-item" key={rotulo}>
+                      <dt>{rotulo}</dt>
+                      <dd>{valorOuNaoInformado(valor)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            </div>
+
+            <div className="perfil-detalhes-obs">
+              <h3>
+                <span className="perfil-detalhes-grupo-icone">✎</span>
+                Observações
+              </h3>
+              <p>{valorOuNaoInformado(aluno.observacoes)}</p>
+            </div>
           </div>
         </section>
 
@@ -519,16 +650,6 @@ function AlunoPerfil() {
             </div>
           </article>
 
-          <article className="perfil-indicador perfil-indicador-faltas">
-            <div className="perfil-indicador-titulo">
-              <span className="perfil-indicador-icone">▦</span>
-              <h2>Faltas</h2>
-            </div>
-            <strong className="perfil-indicador-numero">{aluno.faltas}</strong>
-            <span className="perfil-indicador-descricao">Faltas registradas</span>
-            <span className="perfil-indicador-detalhe">Histórico de frequência</span>
-          </article>
-
           <article className="perfil-indicador perfil-indicador-intervencoes">
             <div className="perfil-indicador-titulo">
               <span className="perfil-indicador-icone">▤</span>
@@ -543,6 +664,16 @@ function AlunoPerfil() {
                 Última em {formatarDataDisplay(historico[0].data)}
               </span>
             )}
+          </article>
+
+          <article className="perfil-indicador perfil-indicador-faltas">
+            <div className="perfil-indicador-titulo">
+              <span className="perfil-indicador-icone">▦</span>
+              <h2>Faltas</h2>
+            </div>
+            <strong className="perfil-indicador-numero">{aluno.faltas}</strong>
+            <span className="perfil-indicador-descricao">Faltas registradas</span>
+            <span className="perfil-indicador-detalhe">Histórico de frequência</span>
           </article>
         </section>
 
