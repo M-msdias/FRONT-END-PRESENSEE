@@ -139,3 +139,181 @@
 /* Informação discreta sobre a natureza temporal dos indicadores */
 .report-contexto { margin: -4px 0 15px; color: #7d83a0; font-size: 12px; line-height: 1.5; }
 [data-theme="dark"] .report-contexto { color: #a9b2ce; }
+
+/* =====================================================
+   SELETOR DE PERÍODO (estilo Booking)
+===================================================== */
+.periodo-wrap { position: relative; }
+
+.periodo-trigger {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.periodo-trigger:focus-visible { border-color: #7457fb; box-shadow: 0 0 0 3px rgba(105, 75, 239, .12); outline: 0; }
+.periodo-trigger-texto {
+  flex: 1;
+  min-width: 0;
+  color: #252a45;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.periodo-popup {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  padding: 22px 22px 16px;
+  background: #fff;
+  border: 1px solid #e0e0f2;
+  border-radius: 14px;
+  box-shadow: 0 18px 45px rgba(43, 34, 84, .22);
+  color: #252a45;
+  font-weight: 400;
+}
+
+.periodo-nav {
+  position: absolute;
+  top: 18px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e0e0f2;
+  border-radius: 50%;
+  background: #fff;
+  color: #5a6296;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.periodo-nav:hover { background: #f1edff; color: #5835e9; border-color: #cdc2ff; }
+.periodo-nav--prev { left: 18px; }
+.periodo-nav--next { right: 18px; }
+
+.periodo-meses { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.periodo-mes { min-width: 0; }
+.periodo-mes-titulo {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+  color: #151830;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.periodo-semana {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+  text-align: center;
+  color: #8b92b3;
+  font-size: 11px;
+  font-weight: 700;
+}
+.periodo-grade { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 2px; }
+
+.periodo-dia {
+  position: relative;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #252a45;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.periodo-dia--vazio { cursor: default; }
+.periodo-dia > span {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  transition: background .12s, color .12s;
+}
+.periodo-dia:not(.periodo-dia--vazio):not(.periodo-dia--inicio):not(.periodo-dia--fim):hover > span { background: #efeaff; }
+
+.periodo-dia--hoje > span { box-shadow: inset 0 0 0 1.5px #b9a9ff; }
+
+/* faixa contínua entre início e fim */
+.periodo-dia--meio { background: #ece6ff; }
+.periodo-dia--tem-faixa::before,
+.periodo-dia--fim::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: #ece6ff;
+}
+.periodo-dia--tem-faixa::before { left: 50%; right: 0; }
+.periodo-dia--fim::before { left: 0; right: 50%; }
+.periodo-dia--inicio.periodo-dia--fim::before { display: none; }
+
+.periodo-dia--inicio > span,
+.periodo-dia--fim > span { background: #6540f4; color: #fff; }
+
+.periodo-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #eceaf5;
+}
+.periodo-dica { color: #7d83a0; font-size: 12px; }
+.periodo-atalhos { display: flex; flex-wrap: wrap; gap: 8px; }
+.periodo-atalho {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #ddd5ff;
+  border-radius: 999px;
+  background: #f7f4ff;
+  color: #5835e9;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .15s;
+}
+.periodo-atalho:hover { background: #ece6ff; }
+
+[data-theme="dark"] .periodo-trigger-texto { color: #f4f5ff; }
+[data-theme="dark"] .periodo-popup { background: #151c30; border-color: #3a4563; color: #e8ecfb; box-shadow: 0 18px 45px rgba(0, 0, 0, .5); }
+[data-theme="dark"] .periodo-nav { background: #1a2440; border-color: #3a4563; color: #adb9ef; }
+[data-theme="dark"] .periodo-nav:hover { background: #2a2250; color: #cbbfff; }
+[data-theme="dark"] .periodo-mes-titulo { color: #f6f5ff; }
+[data-theme="dark"] .periodo-semana { color: #8f9abd; }
+[data-theme="dark"] .periodo-dia { color: #e8ecfb; }
+[data-theme="dark"] .periodo-dia:not(.periodo-dia--vazio):not(.periodo-dia--inicio):not(.periodo-dia--fim):hover > span { background: #2a2250; }
+[data-theme="dark"] .periodo-dia--meio,
+[data-theme="dark"] .periodo-dia--tem-faixa::before,
+[data-theme="dark"] .periodo-dia--fim::before { background: #33274f; }
+[data-theme="dark"] .periodo-rodape { border-color: #303953; }
+[data-theme="dark"] .periodo-dica { color: #a9b2ce; }
+[data-theme="dark"] .periodo-atalho { background: #2a2250; border-color: #44388a; color: #cbbfff; }
+[data-theme="dark"] .periodo-atalho:hover { background: #33274f; }
+
+@media (max-width: 700px) {
+  .periodo-popup { width: 100%; padding: 18px 14px 14px; }
+  .periodo-meses { grid-template-columns: 1fr; }
+  .periodo-mes:nth-child(2) { display: none; }
+  .periodo-nav--prev { left: 12px; }
+  .periodo-nav--next { right: 12px; }
+}
