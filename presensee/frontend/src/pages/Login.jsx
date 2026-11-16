@@ -1,47 +1,12 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
 import "../styles/Login.css";
 
-const REQUISITOS_SENHA = [
-  { id: "tamanho", rotulo: "Pelo menos 8 caracteres", testar: (s) => s.length >= 8 },
-  { id: "maiuscula", rotulo: "Uma letra maiúscula (A–Z)", testar: (s) => /[A-Z]/.test(s) },
-  { id: "minuscula", rotulo: "Uma letra minúscula (a–z)", testar: (s) => /[a-z]/.test(s) },
-  { id: "numero", rotulo: "Pelo menos um número (0–9)", testar: (s) => /\d/.test(s) },
-  {
-    id: "especial",
-    rotulo: "Um caractere especial (!@#$%...)",
-    testar: (s) => /[^A-Za-z0-9]/.test(s),
-  },
-];
-
-function avaliarForcaSenha(senha) {
-  if (!senha) {
-    return { pontos: 0, rotulo: "", cor: "#e2e8f0", requisitos: [] };
-  }
-
-  const requisitos = REQUISITOS_SENHA.map((req) => ({
-    ...req,
-    atendido: req.testar(senha),
-  }));
-
-  const atendidos = requisitos.filter((r) => r.atendido).length;
-
-  let nivel = { pontos: 1, rotulo: "Fraca", cor: "#ef4444" };
-  if (atendidos >= 5) {
-    nivel = { pontos: 4, rotulo: "Excelente", cor: "#10b981" };
-  } else if (atendidos === 4) {
-    nivel = { pontos: 3, rotulo: "Forte", cor: "#22c55e" };
-  } else if (atendidos >= 2) {
-    nivel = { pontos: 2, rotulo: "Média", cor: "#f59e0b" };
-  }
-
-  return { ...nivel, atendidos, requisitos };
-}
-
 function Login() {
   const navigate = useNavigate();
 
+  // Garante que a tela de login sempre renderize no tema claro (sem perder a preferência salva para o painel)
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", "light");
   }, []);
@@ -58,24 +23,7 @@ function Login() {
   const [userIdTroca, setUserIdTroca] = useState("");
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
-  const [mostrarNovaSenha, setMostrarNovaSenha] = useState(false);
   const [mensagemTroca, setMensagemTroca] = useState({ texto: "", tipo: "" });
-
-  // Contador usado para reiniciar a animação de tremida
-  const [tremerKey, setTremerKey] = useState(0);
-  // Controla a tremida dos campos (inputs) por um instante
-  const [tremendo, setTremendo] = useState(false);
-  // Marca que a pessoa já tentou enviar (deixa os requisitos pendentes em vermelho)
-  const [tentouEnviar, setTentouEnviar] = useState(false);
-
-  const analiseSenha = useMemo(() => avaliarForcaSenha(novaSenha), [novaSenha]);
-  const senhaForteValida = analiseSenha.atendidos >= 4;
-
-  function dispararTremida() {
-    setTremerKey((k) => k + 1);
-    setTremendo(true);
-    setTimeout(() => setTremendo(false), 500);
-  }
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -102,6 +50,7 @@ function Login() {
         return;
       }
 
+      // Garante que nenhum avatar de sessão anterior vaze para o novo usuário logado
       localStorage.removeItem("avatarUsuario");
       localStorage.setItem("token", token);
       localStorage.setItem("usuario", JSON.stringify(usuario));
@@ -114,7 +63,6 @@ function Login() {
       if (error.response?.status === 403 && error.response?.data?.requirePasswordChange) {
         setUserIdTroca(error.response.data.userId);
         setPrecisaTrocarSenha(true);
-        setMostrarNovaSenha(false);
         setErro("");
       } else {
         setErro(error.response?.data?.error || "Email ou senha inválidos.");
@@ -127,23 +75,19 @@ function Login() {
   async function handleTrocarSenha(e) {
     e.preventDefault();
     setMensagemTroca({ texto: "", tipo: "" });
-    setTentouEnviar(true);
 
     if (!novaSenha || !confirmarSenha) {
       setMensagemTroca({ texto: "Preencha todos os campos.", tipo: "erro" });
-      dispararTremida();
-      return;
-    }
-
-    if (!senhaForteValida) {
-      setMensagemTroca({ texto: "A senha não é forte suficiente.", tipo: "erro" });
-      dispararTremida();
       return;
     }
 
     if (novaSenha !== confirmarSenha) {
       setMensagemTroca({ texto: "As senhas não coincidem.", tipo: "erro" });
-      dispararTremida();
+      return;
+    }
+
+    if (novaSenha.length < 6) {
+      setMensagemTroca({ texto: "A senha deve ter pelo menos 6 caracteres.", tipo: "erro" });
       return;
     }
 
@@ -151,30 +95,24 @@ function Login() {
     try {
       await api.post("/change-initial-password", {
         userId: userIdTroca,
-        newPassword: novaSenha,
+        newPassword: novaSenha
       });
 
-      setMensagemTroca({
-        texto: "Senha alterada com sucesso! Faça login para continuar.",
-        tipo: "sucesso",
-      });
+      setMensagemTroca({ texto: "Senha alterada com sucesso! Faça login para continuar.", tipo: "sucesso" });
 
       setTimeout(() => {
         setPrecisaTrocarSenha(false);
         setSenha("");
         setNovaSenha("");
         setConfirmarSenha("");
-        setMostrarNovaSenha(false);
-        setTentouEnviar(false);
         setMensagemTroca({ texto: "", tipo: "" });
       }, 3000);
     } catch (error) {
       console.error("Erro ao trocar senha", error);
       setMensagemTroca({
         texto: error.response?.data?.error || "Erro ao alterar a senha. Tente novamente.",
-        tipo: "erro",
+        tipo: "erro"
       });
-      dispararTremida();
     } finally {
       setEnviando(false);
     }
@@ -267,152 +205,43 @@ function Login() {
                 Atenção
               </h1>
               <p className="login-subtitle" style={{ color: "#333", fontWeight: "500" }}>
-                Este é o seu primeiro acesso. Por segurança, cadastre uma senha forte antes de continuar.
+                Este é o seu primeiro acesso. Por segurança, você precisa cadastrar uma nova senha antes de continuar.
               </p>
 
-              <form onSubmit={handleTrocarSenha} style={{ marginTop: "0.75rem" }}>
+              <form onSubmit={handleTrocarSenha} style={{ marginTop: "1rem" }}>
                 <label htmlFor="nova-senha">Nova Senha</label>
                 <input
                   id="nova-senha"
-                  className={`login-input ${tremendo && !senhaForteValida ? "campo-tremer" : ""}`}
-                  type={mostrarNovaSenha ? "text" : "password"}
-                  placeholder="Crie uma senha forte"
+                  className="login-input"
+                  type="password"
+                  placeholder="Mínimo 6 caracteres"
                   value={novaSenha}
-                  onChange={(e) => {
-                    setNovaSenha(e.target.value);
-                    setTremerKey((k) => k + 1);
-                    setMensagemTroca({ texto: "", tipo: "" });
-                  }}
+                  onChange={(e) => setNovaSenha(e.target.value)}
                   disabled={enviando}
                 />
 
-                {/* MEDIDOR E MARCADORES DE SENHA FORTE */}
-                <div
-                  aria-live="polite"
-                  style={{
-                    marginTop: "8px",
-                    marginBottom: "10px",
-                    padding: "10px 12px",
-                    borderRadius: "10px",
-                    backgroundColor: "#f8fafc",
-                    border: "1px solid #e2e8f0",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      marginBottom: "6px",
-                      fontSize: "12px",
-                    }}
-                  >
-                    <span style={{ color: "#475569", fontWeight: 600 }}>Força da senha:</span>
-                    <strong style={{ color: novaSenha ? analiseSenha.cor : "#94a3b8" }}>
-                      {novaSenha ? analiseSenha.rotulo : "Aguardando"}
-                    </strong>
-                  </div>
-
-                  {/* Barra segmentada em 4 níveis */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(4, 1fr)",
-                      gap: "5px",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    {[1, 2, 3, 4].map((nivel) => (
-                      <span
-                        key={nivel}
-                        style={{
-                          height: "5px",
-                          borderRadius: "999px",
-                          backgroundColor:
-                            analiseSenha.pontos >= nivel ? analiseSenha.cor : "#e2e8f0",
-                          transition: "background-color 0.2s ease",
-                        }}
-                      />
-                    ))}
-                  </div>
-
-                  {/* Checklist de requisitos */}
-                  <ul className="senha-requisitos">
-                    {REQUISITOS_SENHA.map((req) => {
-                      const ok = req.testar(novaSenha);
-                      const digitou = novaSenha.length > 0 || tentouEnviar;
-                      const estado = ok ? "ok" : digitou ? "erro" : "neutro";
-
-                      return (
-                        <li
-                          // A key muda só nos itens não cumpridos, reiniciando a tremida
-                          key={ok ? `${req.id}-ok` : `${req.id}-${tremerKey}`}
-                          className={`senha-req ${estado}`}
-                        >
-                          <span className="senha-req-icone" aria-hidden="true">
-                            {estado === "ok" ? "✓" : estado === "erro" ? "×" : "•"}
-                          </span>
-                          <span>{req.rotulo}</span>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-
-                <label htmlFor="confirmar-senha" style={{ marginTop: "6px" }}>
+                <label htmlFor="confirmar-senha" style={{ marginTop: "10px" }}>
                   Confirmar Nova Senha
                 </label>
                 <input
                   id="confirmar-senha"
-                  className={`login-input ${
-                    tremendo && novaSenha !== confirmarSenha ? "campo-tremer" : ""
-                  }`}
-                  type={mostrarNovaSenha ? "text" : "password"}
+                  className="login-input"
+                  type="password"
                   placeholder="Repita a nova senha"
                   value={confirmarSenha}
-                  onChange={(e) => {
-                    setConfirmarSenha(e.target.value);
-                    setMensagemTroca({ texto: "", tipo: "" });
-                  }}
+                  onChange={(e) => setConfirmarSenha(e.target.value)}
                   disabled={enviando}
                 />
 
-                {/* Alerta de "não coincidem" */}
-                {confirmarSenha && novaSenha !== confirmarSenha && (
-                  <p
-                    key={`nao-coincide-${tremerKey}`}
-                    className="aviso-tremer"
-                    style={{
-                      margin: "5px 0 0 0",
-                      fontSize: "12px",
-                      fontWeight: 600,
-                      color: "#dc2626",
-                    }}
-                  >
-                    × As senhas não coincidem
-                  </p>
-                )}
-
-                <p
-                  className="show-password"
-                  onClick={() => setMostrarNovaSenha(!mostrarNovaSenha)}
-                >
-                  {mostrarNovaSenha ? "Ocultar senhas" : "Mostrar senhas"}
-                </p>
-
                 {mensagemTroca.texto && (
                   <p
-                    key={`msg-${tremerKey}`}
-                    className={`error-message ${
-                      mensagemTroca.tipo === "erro" ? "aviso-tremer" : ""
-                    }`}
+                    className="error-message"
                     role="alert"
                     style={{
                       color: mensagemTroca.tipo === "sucesso" ? "#11ba7a" : "#f23b4b",
-                      backgroundColor:
-                        mensagemTroca.tipo === "sucesso" ? "#e6f8f1" : "#ffebee",
+                      backgroundColor: mensagemTroca.tipo === "sucesso" ? "#e6f8f1" : "#ffebee",
                       padding: "8px",
-                      borderRadius: "6px",
+                      borderRadius: "6px"
                     }}
                   >
                     {mensagemTroca.texto}
